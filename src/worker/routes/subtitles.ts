@@ -1,6 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { getDb, type Env } from '../db';
-import { fetchGDriveStream, fetchOneDriveStream } from '../services/onedrive';
+import { fetchGDriveStream } from '../services/gdrive';
+import { fetchOneDriveStream } from '../services/onedrive';
 import {
   convertToWebVtt,
   cuesToWebVtt,

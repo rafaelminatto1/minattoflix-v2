@@ -1,6 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { getDb, type Env } from '../db';
-import { fetchGDriveStream, fetchOneDriveStream, resolveOneDriveDownloadUrl } from '../services/onedrive';
+import { fetchGDriveStream } from '../services/gdrive';
+import { fetchOneDriveStream, resolveOneDriveDownloadUrl } from '../services/onedrive';
 import {
   detectVideoCodec,
   detectAudioCodec,
@@ -8,6 +9,8 @@ import {
   generateMediaPlaylist,
   HlsEndpointHandler,
 } from '../services/hls-transmuxer';
+
+export { populateHeadChunkInBackground, headChunkMemoryCache, HEAD_CHUNK_BYTES, setMemoryHeadChunk };
 
 interface MediaFileMeta {
   row: Record<string, unknown>;
@@ -509,3 +512,34 @@ streamRoutes.get('/api/stream/hls/:fileId/playlist.m3u8', async (c) => {
 streamRoutes.get('/api/stream/hls/:fileId/segment/:segmentNumber.m4s', async (c) => {
   return c.json({ error: 'Segmento não disponível. Use o stream direto para desktop.' }, 404);
 });
+
+/**
+ * Warm head chunks for fast-start streaming
+ */
+export async function warmAllMovieHeadChunks(env: Env, limit = 15): Promise<{ warmedCount: number; logs: string[] }> {
+  const sql = getDb(env);
+  const rows = await sql`
+    SELECT mf.*, ss.provider, ss.share_url, mi.title
+    FROM media_files mf
+    JOIN storage_sources ss ON ss.id = mf.storage_source_id
+    LEFT JOIN media_items mi ON mi.id = mf.media_item_id
+    WHERE ss.provider = 'onedrive'
+    ORDER BY mf.created_at DESC
+    LIMIT ${limit}
+  `;
+
+  let warmedCount = 0;
+  const logs: string[] = [];
+
+  for (const row of rows) {
+    const fid = String(row.id);
+    const meta = row as Record<string, unknown>;
+    await populateHeadChunkInBackground(fid, meta, env);
+    if (headChunkMemoryCache.has(fid)) {
+      warmedCount++;
+      logs.push(`⚡ Fast-Start R2 (2 MB) pronto: ${String(row.title || row.filename)} (${String(row.provider).toUpperCase()})`);
+    }
+  }
+
+  return { warmedCount, logs };
+}
