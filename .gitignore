@@ -1,0 +1,23 @@
+
+# Local credentials and generated output
+.dev.vars*
+.env*
+!.env.example
+node_modules/
+dist/
+.wrangler/
+.playwright-cli/
+build-logs/
+*.log
+production-*.png
+.DS_Store
+ios/App/build/
+ios/App/DerivedData/
+ios/App/App/public/
+ios/App/App/capacitor.config.json
+ios/App/App.xcodeproj/xcuserdata/
+ios/App/App.xcworkspace/xcuserdata/
+ios/App/CapApp-SPM/.build/
+*.p12
+*.p8
+*.mobileprovision

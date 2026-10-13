@@ -1,0 +1,221 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --netflix-red: #e50914;
+    --netflix-bg: #141414;
+    --netflix-card: #181818;
+    /* iPhone 15 safe area insets (Dynamic Island) */
+    --safe-area-inset-top: env(safe-area-inset-top);
+    --safe-area-inset-bottom: env(safe-area-inset-bottom);
+    --safe-area-inset-left: env(safe-area-inset-left);
+    --safe-area-inset-right: env(safe-area-inset-right);
+  }
+
+  body {
+    background-color: #141414;
+    color: #ffffff;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    /* Prevent overscroll bounce on iOS */
+    overscroll-behavior: none;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+.font-netflix-logo {
+  font-family: 'Bebas Neue', Impact, sans-serif;
+  letter-spacing: 0.06em;
+}
+
+/* Hide scrollbars in Netflix horizontal carousels */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Netflix-style video subtitle rendering */
+video::cue {
+  background-color: rgba(0, 0, 0, 0.72);
+  color: #ffffff;
+  font-family: 'Inter', sans-serif;
+  font-weight: 600;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.95);
+  border-radius: 4px;
+  padding: 2px 8px;
+}
+
+/* Safe area utilities for iPhone Dynamic Island / notch */
+.safe-top { padding-top: max(var(--safe-top-space, 0px), env(safe-area-inset-top, 0px)); }
+.safe-bottom { padding-bottom: calc(var(--safe-bottom-space, 0px) + env(safe-area-inset-bottom, 0px)); }
+.safe-left { padding-left: max(var(--safe-inline-space, 1rem), env(safe-area-inset-left, 0px)); }
+.safe-right { padding-right: max(var(--safe-inline-space, 1rem), env(safe-area-inset-right, 0px)); }
+.safe-inset {
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+}
+
+/* Touch targets (Apple HIG / Material Design) */
+.touch-target { min-height: 44px; min-width: 44px; }
+.touch-target-sm { min-height: 36px; min-width: 36px; }
+.touch-target-inline { min-height: 36px; }
+
+/* Improved tap highlight for mobile browsers */
+.tap-highlight { -webkit-tap-highlight-color: rgba(229, 9, 20, 0.25); }
+.tap-highlight-transparent { -webkit-tap-highlight-color: transparent; }
+
+/* Prevent text selection on interactive elements */
+.no-select { -webkit-user-select: none; user-select: none; }
+
+/* Smooth scrolling for carousels */
+.catalog-carousel {
+  scroll-snap-type: x proximity;
+  scroll-padding-inline: 1rem;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.catalog-carousel > * { scroll-snap-align: start; }
+.dialog-scroll { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.catalog-grid-card { content-visibility: auto; contain-intrinsic-size: auto 360px; }
+
+@media (min-width: 768px) {
+  .catalog-carousel { scroll-padding-inline: 3rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
+
+/* Mobile-specific improvements */
+@media (max-width: 639px) {
+  .player-subtitles, .player-skip-intro { bottom: calc(12rem + env(safe-area-inset-bottom, 0px)); }
+  /* Better focus states for mobile */
+  :focus-visible {
+    outline: 2px solid #e50914;
+    outline-offset: 2px;
+  }
+
+  /* Prevent auto-zoom on input focus (iOS Safari requires >= 16px) */
+  input[type="text"],
+  input:not([type]),
+  input[type="search"],
+  input[type="email"],
+  input[type="password"],
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+
+  /* Improve modal scrolling on mobile */
+  .mobile-modal-content {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+}
+
+/* Landscape mobile adjustments (e.g. phones rotated horizontally) */
+@media (max-height: 500px) and (orientation: landscape) {
+  .player-subtitles, .player-skip-intro { bottom: calc(7rem + env(safe-area-inset-bottom, 0px)); }
+  .player-shell button { min-height: 44px; min-width: 44px; }
+  .player-pause-overlay {
+    padding-top: calc(5rem + env(safe-area-inset-top, 0px));
+    padding-bottom: calc(7rem + env(safe-area-inset-bottom, 0px));
+    align-items: center;
+  }
+  .player-pause-content > :not(.player-pause-actions) { display: none; }
+  .player-pause-actions { padding-top: 0; justify-content: center; }
+  .player-pause-actions > button:nth-child(n+3) { display: none; }
+  .hero-mobile-landscape {
+    min-height: 420px;
+    height: 100dvh;
+  }
+}
+
+/* Dynamic viewport units support */
+.dvh-100 { min-height: 100vh; min-height: 100dvh; }
+.dvh-50 { height: 50vh; height: 50dvh; }
+
+html {
+  scroll-padding-top: calc(var(--app-header-height, 104px) + 1rem);
+  -webkit-text-size-adjust: 100%;
+}
+body { margin: 0; }
+:focus-visible { outline: 2px solid #fff; outline-offset: 4px; }
+button:disabled { cursor: default; opacity: .5; }
+
+/* Keep normal spacing when Safari's safe-area values are zero. */
+.app-header, .mobile-navigation { --safe-inline-space: 0px; }
+footer.safe-bottom { --safe-bottom-space: 6rem; }
+.player-top-bar { --safe-top-space: 1rem; }
+.player-bottom-bar { --safe-bottom-space: 1rem; }
+.player-shell { height: 100%; height: 100dvh; }
+.detail-close { top: max(.75rem, env(safe-area-inset-top, 0px)); right: max(.75rem, env(safe-area-inset-right, 0px)); }
+.catalog-main { padding-top: calc(var(--app-header-height, 104px) + 1rem); }
+.media-row .catalog-carousel { scroll-padding-inline: 0; }
+
+@media (max-width: 639px) {
+  .hero-billboard { height: auto; min-height: min(580px, 76svh); max-height: none; }
+  .hero-content { min-height: inherit; padding-top: calc(var(--app-header-height, 104px) + 2rem); padding-bottom: 4.5rem; }
+  .media-card { width: clamp(160px, 43vw, 184px); }
+  .media-card-title { -webkit-line-clamp: 2; min-height: 2.7em; line-height: 1.35; font-size: 13px; }
+  .media-row-heading h2 { font-size: 1rem; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: .5rem; }
+  .media-row-heading p { -webkit-line-clamp: 2; }
+  .catalog-filters { padding: 1rem; border: 1px solid #3f3f46; border-radius: .75rem; background: #181818; }
+  .catalog-filters label { min-width: 0; }
+  .catalog-filters select { max-width: 100%; }
+  .app-header > div:first-child { gap: .375rem; }
+}
+@media (max-width: 359px) {
+  .app-header button[aria-label="Sincronizar nuvem"] { display: none; }
+  .player-primary-actions button[aria-label="Iniciar do começo"] { display: none; }
+}
+
+@media (min-width: 768px) {
+  .safe-left, .safe-right { --safe-inline-space: 3rem; }
+  .app-header, .mobile-navigation { --safe-inline-space: 0px; }
+  footer.safe-bottom { --safe-bottom-space: 2.5rem; }
+}
+@media (min-width: 1024px) { html { scrollbar-gutter: stable; } }
+@media (pointer: coarse), (max-width: 639px) {
+  .touch-target-sm, .touch-target-inline { min-height: 44px; min-width: 44px; }
+  button, a, input[type="range"] { touch-action: manipulation; }
+  .player-shell button { min-height: 44px; min-width: 44px; }
+}
+@media (max-width: 639px) {
+  .player-toolbar { flex-wrap: wrap; gap: .5rem; }
+  .player-primary-actions, .player-secondary-actions { width: 100%; justify-content: space-between; gap: .25rem; }
+  .player-options {
+    bottom: calc(10rem + env(safe-area-inset-bottom, 0px));
+    max-height: calc(100dvh - 15rem - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    overscroll-behavior: contain;
+  }
+  .player-top-bar { --safe-top-space: .75rem; }
+  .player-shell input[type="range"] { min-height: 44px; }
+}
+@media (max-height: 500px) and (orientation: landscape) {
+  .player-primary-actions, .player-secondary-actions { gap: .25rem; }
+  .player-bottom-bar { --safe-inline-space: 1rem; --safe-bottom-space: .5rem; padding-top: .75rem; }
+  .player-options { bottom: calc(6rem + env(safe-area-inset-bottom, 0px)); max-height: calc(100dvh - 7rem - env(safe-area-inset-bottom, 0px)); }
+  .player-toolbar input[aria-label="Volume"] { width: 3rem; }
+  .player-toolbar button[title="Iniciar do começo"],
+  .player-toolbar button[title="Picture-in-Picture"] { display: none; }
+}
+
+/* iPhone does not consistently expose orientation locking. Rotate the whole
+   player so its video, subtitles and touch controls remain aligned. */
+@media (orientation: portrait) {
+  .player-shell.player-landscape {
+    inset: auto;
+    top: 50%;
+    left: 50%;
+    width: 100dvh;
+    height: 100dvw;
+    transform: translate(-50%, -50%) rotate(90deg);
+  }
+}
