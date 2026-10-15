@@ -5,7 +5,7 @@ import ts from 'typescript';
 
 const source = await readFile(new URL('../src/client/services/fullscreen.ts', import.meta.url), 'utf8');
 const js = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
-const { togglePlayerFullscreen, isPlayerFullscreen } = await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
+const { togglePlayerFullscreen, enterPlayerFullscreen, exitPlayerFullscreen, isPlayerFullscreen } = await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
 
 test('iOS calls native fullscreen synchronously even when container API exists', async () => {
   let native = false;
@@ -37,8 +37,27 @@ test('desktop enters and exits document fullscreen', async () => {
   assert.equal(isPlayerFullscreen(doc, null), false);
 });
 
+test('enterPlayerFullscreen enters fullscreen and does nothing if already fullscreen', async () => {
+  const doc = { fullscreenElement: null };
+  let calls = 0;
+  const target = { async requestFullscreen() { calls++; doc.fullscreenElement = this; } };
+  await enterPlayerFullscreen(doc, target, null, false);
+  assert.equal(calls, 1);
+  assert.equal(isPlayerFullscreen(doc, null), true);
+  // Calling again while already in fullscreen should not trigger requestFullscreen again
+  await enterPlayerFullscreen(doc, target, null, false);
+  assert.equal(calls, 1);
+});
+
+test('exitPlayerFullscreen exits fullscreen properly', async () => {
+  const doc = { fullscreenElement: {}, async exitFullscreen() { this.fullscreenElement = null; } };
+  await exitPlayerFullscreen(doc, null);
+  assert.equal(isPlayerFullscreen(doc, null), false);
+});
+
 test('failure never reports fullscreen as active', async () => {
   const doc = {};
   await assert.rejects(togglePlayerFullscreen(doc, { requestFullscreen: async () => { throw new Error('Denied'); } }, null, false));
   assert.equal(isPlayerFullscreen(doc, null), false);
 });
+

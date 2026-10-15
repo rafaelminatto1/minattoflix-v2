@@ -60,6 +60,7 @@ export const CloudManagerModal: React.FC<CloudManagerModalProps> = ({
   const [shareUrl, setShareUrl] = useState('');
   const [adding, setAdding] = useState(false);
   const [warmingHeads, setWarmingHeads] = useState(false);
+  const [enrichingCovers, setEnrichingCovers] = useState(false);
   const [syncLogs, setSyncLogs] = useState<string[]>([]);
   const [cfStatus, setCfStatus] = useState<CloudflareEcosystemStatus | null>(null);
 
@@ -113,6 +114,24 @@ export const CloudManagerModal: React.FC<CloudManagerModalProps> = ({
       setSyncLogs([error instanceof Error ? error.message : 'Falha ao pré-aquecer inícios no R2.']);
     } finally {
       setWarmingHeads(false);
+    }
+  };
+
+  const handleEnrichCovers = async () => {
+    setEnrichingCovers(true);
+    try {
+      const res = await fetch(apiUrl('/api/scanner/enrich-covers'), { method: 'POST' });
+      const data = await res.json();
+      if (data && Array.isArray(data.logs)) {
+        setSyncLogs([
+          `🎨 Pesquisa de capas concluída: ${data.healedCount || 0} títulos atualizados com novas capas em HD!`,
+          ...data.logs,
+        ]);
+      }
+    } catch (error) {
+      setSyncLogs([error instanceof Error ? error.message : 'Falha ao buscar capas faltantes.']);
+    } finally {
+      setEnrichingCovers(false);
     }
   };
 
@@ -209,6 +228,15 @@ export const CloudManagerModal: React.FC<CloudManagerModalProps> = ({
                 </h3>
                 <div className="flex flex-wrap items-center gap-2">
                   <button
+                    onClick={handleEnrichCovers}
+                    disabled={enrichingCovers || isSyncing}
+                    className="flex items-center justify-center gap-2 bg-zinc-800 hover:bg-zinc-700 border border-purple-500/40 text-purple-300 text-xs font-bold px-3.5 py-2.5 rounded transition cursor-pointer touch-target tap-highlight"
+                    title="Pesquisa e atualiza pôsteres em HD para filmes que ainda não têm capa"
+                  >
+                    <Sparkles className={`w-4 h-4 ${enrichingCovers ? 'animate-spin text-purple-400' : 'text-purple-400'}`} />
+                    <span>{enrichingCovers ? 'Pesquisando Capas...' : 'Buscar Capas Faltantes'}</span>
+                  </button>
+                  <button
                     onClick={handleWarmHeads}
                     disabled={warmingHeads || isSyncing}
                     className="flex items-center justify-center gap-2 bg-zinc-800 hover:bg-zinc-700 border border-amber-500/40 text-amber-300 text-xs font-bold px-3.5 py-2.5 rounded transition cursor-pointer touch-target tap-highlight"
@@ -256,7 +284,7 @@ export const CloudManagerModal: React.FC<CloudManagerModalProps> = ({
                           {src.provider === 'gdrive' ? 'Google Drive' : 'Microsoft OneDrive'}
                         </span>
                         <span className="text-[11px] text-emerald-400 flex items-center gap-1">
-                          ● Auto-Sync 15m Ativo
+                          ● Auto-Sync 5m Ativo
                         </span>
                       </div>
                       <h4 className="font-bold text-white text-sm mt-1">{src.name}</h4>
@@ -450,13 +478,13 @@ export const CloudManagerModal: React.FC<CloudManagerModalProps> = ({
               <div className="bg-zinc-900/90 border border-zinc-800 rounded-lg p-4 space-y-1.5">
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-white flex items-center gap-1.5">
-                    <Clock className="w-4 h-4 text-amber-300" /> Cloudflare Cron Triggers (`*/15 * * * *`)
+                    <Clock className="w-4 h-4 text-amber-300" /> Cloudflare Cron Triggers (`*/5 * * * *`)
                   </span>
-                  <span className="text-emerald-400 font-bold">● A CADA 15 MIN</span>
+                  <span className="text-emerald-400 font-bold">● A CADA 5 MIN</span>
                 </div>
                 <p className="text-zinc-400">
-                  Varre automaticamente suas pastas do Google Drive e OneDrive a cada 15 minutos em
-                  background e publica novos filmes `.MKV` sozinho.
+                  Varre automaticamente suas pastas do Google Drive e OneDrive a cada 5 minutos em
+                  background, busca capas faltantes e publica novos filmes `.MKV` sozinho.
                 </p>
               </div>
             </div>

@@ -2,6 +2,7 @@ import { Input, UrlSource, AudioBufferSink, MATROSKA, MP4, WEBM } from 'mediabun
 import type { CanvasSink } from 'mediabunny';
 import type { AudioTrack } from '../types';
 
+// sideEffects: true via package.json in services directory
 export function isIosWebKit(): boolean {
   if (typeof navigator === 'undefined') return false;
   const ua = navigator.userAgent || '';
@@ -106,8 +107,13 @@ export class HybridAudioSyncController {
     getPlaybackRate: () => number;
   } | null = null;
   private forceWasmMode = false;
+  private is4KMode = false;
 
-  constructor(videoEl: HTMLVideoElement, private onStatus?: (status: string) => void) {
+  public setIs4KMode(val: boolean) {
+    this.is4KMode = val;
+  }
+
+  constructor(videoEl: HTMLVideoElement, private onStatus?: (status: string) => void, private getAudioOffset?: () => number) {
     this.videoEl = videoEl;
     this.bindVideoEvents();
   }
@@ -125,7 +131,9 @@ export class HybridAudioSyncController {
   }
 
   private getMediaTime(): number {
-    return this.clockOverride ? this.clockOverride.getCurrentTime() : this.videoEl.currentTime;
+    const baseTime = this.clockOverride ? this.clockOverride.getCurrentTime() : this.videoEl.currentTime;
+    const offset = this.getAudioOffset?.() || 0;
+    return baseTime + offset;
   }
 
   private isMediaPaused(): boolean {
@@ -439,10 +447,12 @@ export class HybridAudioSyncController {
 
         const targetContextTime = schedulePacket(item);
 
-        // Throttle pre-buffering ahead to at most 4.5 seconds of audio in memory
+        // Pre-buffering adaptativo: 14 segundos para mídias no geral e 22 segundos para 4K,
+        // garantindo que streams com alto bitrate ou oscilações de rede não sofram esgotamento do buffer de áudio.
+        const maxAhead = this.is4KMode ? 22.0 : 14.0;
         const bufferedAhead = targetContextTime - ctx.currentTime;
-        if (bufferedAhead > 4.0) {
-          await new Promise((r) => setTimeout(r, Math.min(1200, (bufferedAhead - 2.5) * 1000)));
+        if (bufferedAhead > maxAhead) {
+          await new Promise((r) => setTimeout(r, Math.min(1200, (bufferedAhead - (maxAhead - 3.5)) * 1000)));
         }
       }
     } catch (error) {
@@ -552,21 +562,56 @@ export class HybridAudioSyncController {
         const mTracks = await input.getAudioTracks();
         if (mTracks.length > 0) {
           const targetIdx = Math.min(track.track_index, mTracks.length - 1);
-          const chosenTrack = mTracks[targetIdx];
+          let chosenTrack = mTracks[targetIdx];
           // The file's codec can differ from incomplete catalog metadata.
           if (/ac3|ec3/i.test(String(chosenTrack.codec || '').replace(/[^a-z0-9]/gi, ''))) {
             await ensureDolbyDecoder();
           }
-          const canDec = await chosenTrack.canDecode();
+          let canDec = await chosenTrack.canDecode().catch(() => false);
+          let activeIdx = targetIdx;
+
+          // Se a faixa solicitada não puder decodificar, tenta outras faixas de áudio embutidas no arquivo
+          if (!canDec) {
+            for (let i = 0; i < mTracks.length; i++) {
+              if (i === targetIdx) continue;
+              const altTrack = mTracks[i];
+              if (/ac3|ec3/i.test(String(altTrack.codec || '').replace(/[^a-z0-9]/gi, ''))) {
+                await ensureDolbyDecoder();
+              }
+              const altCanDec = await altTrack.canDecode().catch(() => false);
+              if (altCanDec) {
+                chosenTrack = altTrack;
+                activeIdx = i;
+                canDec = true;
+                break;
+              }
+            }
+          }
 
           if (canDec) {
             const sink = new AudioBufferSink(chosenTrack);
             // canDecode only checks registration/configuration; decode a real packet to verify WASM startup.
             const curT = this.getMediaTime() || 0;
-            const firstBuffer =
-              (await sink.getBuffer(curT)) ||
-              (await sink.getBuffer(curT + 0.2)) ||
-              (await sink.getBuffer(Math.max(0.5, curT + 0.5)));
+            const probePoints = [curT, Math.max(0, curT - 0.1), curT + 0.1, curT + 0.25, curT + 0.5, curT + 1.0, 0];
+            let firstBuffer: { buffer: AudioBuffer; timestamp: number; duration: number } | null = null;
+            for (const pt of probePoints) {
+              try {
+                firstBuffer = await sink.getBuffer(pt);
+                if (firstBuffer) break;
+              } catch {}
+            }
+
+            // Em streams 4K ou alta latência, aguarda com tolerância se os dados do cluster inicial ainda estiverem baixando
+            if (!firstBuffer) {
+              for (let r = 1; r <= 3; r++) {
+                await new Promise((res) => setTimeout(res, r * 300));
+                try {
+                  firstBuffer = (await sink.getBuffer(this.getMediaTime() || 0)) || (await sink.getBuffer(0));
+                  if (firstBuffer) break;
+                } catch {}
+              }
+            }
+
             if (!firstBuffer) throw new Error('No decoded audio packet at the current position');
             if (selectionId !== this.selectionId) return { mode: 'cancelled', statusText: '' };
             this.wasmInput = input;
@@ -579,9 +624,10 @@ export class HybridAudioSyncController {
               this.startWasmPumpFrom(this.getMediaTime(), firstBuffer);
             }
 
+            const fallbackNote = activeIdx !== targetIdx ? ' (Alternativa compatível)' : '';
             return {
               mode: 'wasm_ac3_mediabunny',
-              statusText: `WASM Dolby/MKV Decoder Ativo: Faixa #${targetIdx + 1} (${track.label})`,
+              statusText: `WASM Dolby/MKV Decoder Ativo: Faixa #${activeIdx + 1} (${track.label})${fallbackNote}`,
             };
           }
         }

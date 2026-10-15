@@ -36,6 +36,13 @@ export function prewarmStream(item?: { files?: MediaFile[] }, explicitFileId?: s
   });
 }
 
+// Request deduplication cache
+const inflightRequests = new Map<string, Promise<Response>>();
+
+function getRequestKey(url: string, init?: RequestInit): string {
+  return `${init?.method || 'GET'}:${url}:${JSON.stringify(init?.body || '')}`;
+}
+
 export function qualityLabel(file?: MediaFile): string {
   if (!file) return 'Indisponível';
   const resolution = file.resolution === '2160p' ? '4K' : file.resolution || 'Qualidade desconhecida';
@@ -66,7 +73,41 @@ export async function requestJson<T>(url: string, init?: RequestInit): Promise<T
 }
 
 export async function requestResponse(url: string, init?: RequestInit): Promise<Response> {
+  const key = getRequestKey(url, init);
+  
+  // Deduplicate GET requests
+  if (!init?.method || init.method === 'GET') {
+    const existing = inflightRequests.get(key);
+    if (existing) {
+      return existing.then(r => r.clone());
+    }
+    
+    const promise = fetch(apiUrl(url), { ...init, signal: init?.signal || AbortSignal.timeout(45000) })
+      .then(response => {
+        inflightRequests.delete(key);
+        if (!response.ok) throw new Error(`Não foi possível concluir a operação (${response.status}). Tente novamente.`);
+        return response;
+      })
+      .catch(err => {
+        inflightRequests.delete(key);
+        throw err;
+      });
+    
+    inflightRequests.set(key, promise);
+    return promise;
+  }
+  
+  // For non-GET, just fetch normally
   const response = await fetch(apiUrl(url), { ...init, signal: init?.signal || AbortSignal.timeout(45000) });
   if (!response.ok) throw new Error(`Não foi possível concluir a operação (${response.status}). Tente novamente.`);
   return response;
+}
+
+// Clear deduplication cache periodically
+if (typeof window !== 'undefined') {
+  setInterval(() => {
+    if (inflightRequests.size > 50) {
+      inflightRequests.clear();
+    }
+  }, 60000);
 }

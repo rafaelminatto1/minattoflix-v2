@@ -1,14 +1,14 @@
-import React, { useCallback, useEffect, useMemo, useState, useRef, useLayoutEffect, lazy, Suspense } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useRef, useLayoutEffect, Suspense, lazy } from 'react';
 import type { BootstrapResponse, MediaItem, Profile, StorageSource, WatchProgress, EpisodeItem } from './types';
 import { ProfileGate } from './components/ProfileGate';
 import { Navbar, type NavSection } from './components/Navbar';
 import { HeroBillboard } from './components/HeroBillboard';
 import { MediaRow } from './components/MediaRow';
+import { NetflixPlayer } from './components/NetflixPlayer';
 const DetailModal = lazy(() => import('./components/DetailModal').then(module => ({ default: module.DetailModal })));
-const NetflixPlayer = lazy(() => import('./components/NetflixPlayer').then(module => ({ default: module.NetflixPlayer })));
 const CloudManagerModal = lazy(() => import('./components/CloudManagerModal').then(module => ({ default: module.CloudManagerModal })));
 import { addedTime, matchesSearch, preferredFile, prewarmStream, qualityLabel, requestJson } from './services/catalog';
-import { Cloud, Play, Info, Languages, Subtitles, RefreshCw } from 'lucide-react';
+import { Cloud, Play, Info, Languages, Subtitles, RefreshCw, SlidersHorizontal } from 'lucide-react';
 
 export const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
@@ -98,27 +98,27 @@ export const App: React.FC = () => {
   };
   const openPlayer = async (item: MediaItem, audioId?: string, subtitleId?: string, episode?: EpisodeItem) => {
     prewarmStream(episode || item);
-    // On mobile devices, immediately enter fullscreen while inside the synchronous user tap gesture
+    // Automatically enter fullscreen on both desktop and mobile devices within the synchronous user gesture
+    const doc = document as Document & { webkitFullscreenElement?: Element | null };
+    const rootEl = document.documentElement as HTMLElement & {
+      webkitRequestFullscreen?: () => Promise<void> | void;
+    };
+    if (!doc.fullscreenElement && !doc.webkitFullscreenElement) {
+      if (rootEl.requestFullscreen) {
+        rootEl.requestFullscreen().catch(() => {});
+      } else if (rootEl.webkitRequestFullscreen) {
+        try {
+          rootEl.webkitRequestFullscreen();
+        } catch {
+          // Ignore
+        }
+      }
+    }
     const isMobileDevice =
       window.innerWidth < 768 ||
       window.matchMedia?.('(pointer: coarse)').matches ||
       /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     if (isMobileDevice) {
-      const doc = document as Document & { webkitFullscreenElement?: Element | null };
-      const rootEl = document.documentElement as HTMLElement & {
-        webkitRequestFullscreen?: () => Promise<void> | void;
-      };
-      if (!doc.fullscreenElement && !doc.webkitFullscreenElement) {
-        if (rootEl.requestFullscreen) {
-          rootEl.requestFullscreen().catch(() => {});
-        } else if (rootEl.webkitRequestFullscreen) {
-          try {
-            rootEl.webkitRequestFullscreen();
-          } catch {
-            // Ignore
-          }
-        }
-      }
       const orientation = (screen as Screen & { orientation?: { lock?: (mode: string) => Promise<void> } }).orientation;
       orientation?.lock?.('landscape')?.catch(() => {});
     }
@@ -135,10 +135,15 @@ export const App: React.FC = () => {
       if (requestId !== detailRequestRef.current) return;
       const playable = episode ? { ...detail, title: `${detail.title} — ${episode.title}`, files: episode.files,
         audioTracks: episode.files.flatMap(file => file.audioTracks), subtitleTracks: episode.files.flatMap(file => file.subtitleTracks), progress: null } : detail;
-      if (!playable.files.length) throw new Error('Este título ainda não tem um arquivo de vídeo disponível.');
+      if (!playable.files.length) throw new Error('Este título ainda não tem um arquivo de vídeo disponível. Sincronize o catálogo.');
       setDetailItemId(null);
       setPlayerState({ item: playable, audioId, subtitleId });
-    } catch (error) { setError(error instanceof Error ? error.message : 'Falha ao abrir vídeo.'); }
+    } catch (error) { 
+      const msg = error instanceof Error ? error.message : 'Falha ao abrir vídeo.';
+      setError(msg);
+      // Also show as toast-like notification that doesn't trigger ErrorBoundary
+      console.error('[openPlayer]', msg);
+    }
     finally { if (requestId === detailRequestRef.current) setDetailLoading(false); }
   };
 
@@ -429,11 +434,11 @@ export const App: React.FC = () => {
           </div>
 
           <div className="sm:hidden flex items-center justify-between gap-3 mb-4">
-            <button type="button" aria-expanded={showMobileFilters} aria-controls="catalog-filters"
+            <button type="button" aria-label={showMobileFilters ? 'Fechar filtros e ordenação' : 'Abrir filtros e ordenação'} aria-expanded={showMobileFilters} aria-controls="catalog-filters"
               onClick={() => setShowMobileFilters(value => !value)}
-              className="touch-target px-4 rounded-lg border border-zinc-700 bg-zinc-900 text-sm font-semibold">
-              {showMobileFilters ? 'Fechar filtros' : 'Filtros e ordenação'}
-              {(filters.genre || filters.year || filters.language || filters.quality || filters.sort !== 'recent') && <span className="ml-2 text-[#46D369]">• Ativos</span>}
+              className="touch-target flex items-center justify-center px-3 rounded-lg border border-zinc-700 bg-zinc-900 text-sm font-semibold">
+              <SlidersHorizontal className="w-5 h-5" aria-hidden="true" />
+              {(filters.genre || filters.year || filters.language || filters.quality || filters.sort !== 'recent') && <span className="ml-1 text-[#46D369]" aria-label="Filtros ativos">•</span>}
             </button>
             <span className="text-xs text-zinc-400 shrink-0" role="status">{filteredGridItems.length} títulos</span>
           </div>
@@ -541,10 +546,11 @@ export const App: React.FC = () => {
                       </div>
                       <button
                         onClick={() => void openDetails(item)}
+                        aria-label={`Áudio, legendas e detalhes de ${item.title}`}
                         className="mt-2.5 sm:mt-3 w-full bg-zinc-800 hover:bg-zinc-700 text-xs text-zinc-200 py-2 rounded flex items-center justify-center gap-1.5 cursor-pointer touch-target-sm tap-highlight"
                       >
                         <Info className="w-3.5 h-3.5 shrink-0" />
-                        <span className="truncate">Áudio & Legendas</span>
+                        <span className="hidden sm:inline truncate">Áudio & Legendas</span>
                       </button>
                     </div>
                   </div>
@@ -663,7 +669,7 @@ export const App: React.FC = () => {
             </p>
           </div>
 
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 sm:gap-3 w-full md:w-auto">
+          <div className="hidden sm:flex sm:flex-row items-center gap-3 w-full md:w-auto">
             <button
               onClick={() => setShowCloudStudio(true)}
               className="bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-200 px-4 py-2.5 rounded flex items-center justify-center gap-2 transition cursor-pointer touch-target tap-highlight"
@@ -685,32 +691,36 @@ export const App: React.FC = () => {
 
       {errorBanner}
       {detailLoading && <div role="status" className="fixed bottom-20 sm:bottom-4 right-4 z-[60] bg-zinc-900 border border-zinc-700 rounded p-4 shadow-xl text-sm">Carregando detalhes… <button className="ml-3 underline" onClick={() => { detailRequestRef.current++; setDetailLoading(false); }}>Cancelar</button></div>}
-      <Suspense fallback={<div role="status" className="fixed bottom-4 right-4 z-[60] bg-zinc-900 p-4 rounded">Abrindo…</div>}>
+
       {/* Title Details Modal */}
       {detailItem && (
-        <DetailModal
-          item={detailItem}
-          onClose={() => setDetailItemId(null)}
-          onPlay={(item, audioId, subId, episode) => void openPlayer(item, audioId, subId, episode)}
-          onToggleMyList={handleToggleMyList}
-          onRefreshCatalog={async () => {
-            const data = await requestJson<BootstrapResponse>(`/api/media/${detailItem.id}/details?profileId=${encodeURIComponent(activeProfile.id)}`);
-            const refreshed = data.catalog[0];
-            if (refreshed) setCatalog(previous => previous.map(media => media.id === refreshed.id ? refreshed : media));
-          }}
-        />
+        <Suspense fallback={<div role="status" className="fixed bottom-4 right-4 z-[60] bg-zinc-900 p-4 rounded">Abrindo…</div>}>
+          <DetailModal
+            item={detailItem}
+            onClose={() => setDetailItemId(null)}
+            onPlay={(item, audioId, subId, episode) => void openPlayer(item, audioId, subId, episode)}
+            onToggleMyList={handleToggleMyList}
+            onRefreshCatalog={async () => {
+              const data = await requestJson<BootstrapResponse>(`/api/media/${detailItem.id}/details?profileId=${encodeURIComponent(activeProfile.id)}`);
+              const refreshed = data.catalog[0];
+              if (refreshed) setCatalog(previous => previous.map(media => media.id === refreshed.id ? refreshed : media));
+            }}
+          />
+        </Suspense>
       )}
 
       {/* Cloud Storage & Software Engineering Studio Modal */}
       {showCloudStudio && (
-        <CloudManagerModal
-          storageSources={storageSources}
-          catalog={catalog}
-          onClose={() => setShowCloudStudio(false)}
-          onSyncNow={handleSyncCloudNow}
-          onAddStorageSource={handleAddStorageSource}
-          isSyncing={isSyncing}
-        />
+        <Suspense fallback={<div role="status" className="fixed bottom-4 right-4 z-[60] bg-zinc-900 p-4 rounded">Abrindo…</div>}>
+          <CloudManagerModal
+            storageSources={storageSources}
+            catalog={catalog}
+            onClose={() => setShowCloudStudio(false)}
+            onSyncNow={handleSyncCloudNow}
+            onAddStorageSource={handleAddStorageSource}
+            isSyncing={isSyncing}
+          />
+        </Suspense>
       )}
 
       {/* Fullscreen Netflix Video Player */}
@@ -736,7 +746,6 @@ export const App: React.FC = () => {
           }}
         />
       )}
-      </Suspense>
     </div>
   );
 };

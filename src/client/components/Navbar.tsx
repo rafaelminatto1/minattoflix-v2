@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Cloud, Search, X, RefreshCw, ChevronDown, Home, Film, Sparkles, Bookmark } from 'lucide-react';
+import { Cloud, Search, X, RefreshCw, ChevronDown, Home, Film, Sparkles, Bookmark, Shield, Baby } from 'lucide-react';
 import type { Profile } from '../types';
 
 export type NavSection = 'home' | 'movies' | '4k' | 'dc' | 'kids' | 'mylist';
@@ -173,6 +173,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             {/* Cloud Studio Button */}
             <button
               onClick={onOpenCloudStudio}
+              aria-label="Gerenciar catálogo"
               className="flex items-center gap-1.5 text-xs font-semibold bg-[#E50914]/15 hover:bg-[#E50914]/25 border border-[#E50914]/50 text-white px-2.5 sm:px-3 py-1.5 rounded transition cursor-pointer touch-target-sm tap-highlight"
               title="Gerenciar catálogo, Dual Áudio e Legendas"
             >
@@ -227,7 +228,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         )}
 
         {/* Mobile/Tablet horizontal category pills bar */}
-        <div className="flex xl:hidden items-center gap-2 overflow-x-auto no-scrollbar px-3 sm:px-4 pb-2.5 pt-0.5 text-xs">
+        <div className="hidden sm:flex xl:hidden items-center gap-2 overflow-x-auto no-scrollbar px-3 sm:px-4 pb-2.5 pt-0.5 text-xs">
           {navItems.map((item) => {
             const isActive = activeSection === item.id && !searchQuery;
             return (
@@ -255,71 +256,19 @@ export const Navbar: React.FC<NavbarProps> = ({
         aria-label="Navegação rápida móvel"
         className="mobile-navigation sm:hidden fixed bottom-0 inset-x-0 z-40 bg-[#121212]/95 backdrop-blur-lg border-t border-zinc-800/90 safe-bottom safe-left safe-right"
       >
-        <div className="grid grid-cols-5 h-14">
-          <button
-            type="button"
-            onClick={() => {
-              onSelectSection('home');
-              onSearchChange('');
-            }}
-            className={`flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium transition tap-highlight ${
-              activeSection === 'home' && !searchQuery ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            <Home className={`w-4 h-4 ${activeSection === 'home' && !searchQuery ? 'text-[#E50914]' : ''}`} />
-            <span>Início</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              onSelectSection('movies');
-              onSearchChange('');
-            }}
-            className={`flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium transition tap-highlight ${
-              activeSection === 'movies' && !searchQuery ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            <Film className={`w-4 h-4 ${activeSection === 'movies' && !searchQuery ? 'text-[#E50914]' : ''}`} />
-            <span>Catálogo</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              onSelectSection('4k');
-              onSearchChange('');
-            }}
-            className={`flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium transition tap-highlight ${
-              activeSection === '4k' && !searchQuery ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            <Sparkles className={`w-4 h-4 ${activeSection === '4k' && !searchQuery ? 'text-[#E50914]' : ''}`} />
-            <span>4K UHD</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              onSelectSection('mylist');
-              onSearchChange('');
-            }}
-            className={`flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium transition tap-highlight ${
-              activeSection === 'mylist' && !searchQuery ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            <Bookmark className={`w-4 h-4 ${activeSection === 'mylist' && !searchQuery ? 'text-[#E50914]' : ''}`} />
-            <span>Minha Lista</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={onOpenCloudStudio}
-            className="flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium text-zinc-400 hover:text-zinc-200 transition tap-highlight"
-          >
-            <Cloud className="w-4 h-4 text-[#E50914]" />
-            <span>Nuvem</span>
-          </button>
+        <div className="grid grid-cols-6 h-14">
+          {navItems.map((item) => {
+            const Icon = { home: Home, movies: Film, '4k': Sparkles, dc: Shield, kids: Baby, mylist: Bookmark }[item.id];
+            const active = activeSection === item.id && !searchQuery;
+            return (
+              <button key={item.id} type="button" aria-label={item.label} title={item.label}
+                aria-current={active ? 'page' : undefined}
+                onClick={() => { onSelectSection(item.id); onSearchChange(''); }}
+                className={`flex items-center justify-center touch-target tap-highlight transition ${active ? 'text-[#E50914] bg-white/5' : 'text-zinc-400 hover:text-white'}`}>
+                <Icon className="w-6 h-6" aria-hidden="true" />
+              </button>
+            );
+          })}
         </div>
       </nav>
     </>

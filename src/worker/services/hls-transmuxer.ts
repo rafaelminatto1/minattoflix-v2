@@ -300,7 +300,7 @@ export class HlsStreamingTransmuxer {
     }
   }
 
-  private cleanup() {
+  public cleanup() {
     if (this.upstreamReader) {
       this.upstreamReader.cancel().catch(() => {});
       this.upstreamReader = null;
@@ -324,6 +324,9 @@ export class HlsEndpointHandler {
   private isEndOfStream = false;
   private transmuxer: HlsStreamingTransmuxer | null = null;
   private upstreamResponse: Response | null = null;
+  private segmentStream: ReadableStream<Uint8Array> | null = null;
+  private reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  private consuming = false;
 
   async initialize(
     upstreamResponse: Response,
@@ -332,8 +335,35 @@ export class HlsEndpointHandler {
     this.upstreamResponse = upstreamResponse;
     this.transmuxer = new HlsStreamingTransmuxer(options);
     
-    // Start transmuxing in background
-    this.transmuxer.createSegmentStream(upstreamResponse);
+    // Create segment stream and start consuming it
+    this.segmentStream = this.transmuxer.createSegmentStream(upstreamResponse);
+    this.reader = this.segmentStream.getReader();
+    this.consuming = true;
+    this.consumeSegments();
+  }
+
+  private async consumeSegments() {
+    if (!this.reader || !this.consuming) return;
+    
+    try {
+      while (this.consuming) {
+        const { done, value } = await this.reader.read();
+        if (done) {
+          this.isEndOfStream = true;
+          break;
+        }
+        if (value) {
+          // The value from HlsStreamingTransmuxer is the raw segment data
+          // We need to parse it to extract init segment and media segments
+          // For now, store raw - the transmuxer outputs fMP4 segments
+          const segmentNum = this.segments.size;
+          this.segments.set(segmentNum, value);
+        }
+      }
+    } catch (err) {
+      console.error('HLS segment consumption error:', err);
+      this.isEndOfStream = true;
+    }
   }
 
   getInitSegment(): Uint8Array | null {
@@ -360,6 +390,15 @@ export class HlsEndpointHandler {
       segments,
       isEndOfStream: this.isEndOfStream,
     });
+  }
+
+  close() {
+    this.consuming = false;
+    this.reader?.cancel().catch(() => {});
+    this.reader = null;
+    this.segmentStream = null;
+    this.transmuxer?.cleanup();
+    this.transmuxer = null;
   }
 }
 

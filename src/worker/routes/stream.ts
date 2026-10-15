@@ -10,23 +10,73 @@ import {
   HlsEndpointHandler,
 } from '../services/hls-transmuxer';
 
-export { populateHeadChunkInBackground, headChunkMemoryCache, HEAD_CHUNK_BYTES, setMemoryHeadChunk };
+export { populateHeadChunkInBackground, headChunkMemoryCache, setMemoryHeadChunk };
 
-interface MediaFileMeta {
-  row: Record<string, unknown>;
-  expiresAt: number;
+// Global HLS handler cache (per isolate)
+const hlsHandlerCache = new Map<string, { handler: HlsEndpointHandler; expiresAt: number }>();
+
+function getHlsCacheKey(fileId: string, vcodec: string, acodec: string): string {
+  return `${fileId}:${vcodec}:${acodec}`;
+}
+
+function getOrCreateHlsHandler(
+  fileId: string,
+  vcodec: string,
+  acodec: string,
+  factory: () => Promise<HlsEndpointHandler>
+): Promise<HlsEndpointHandler> {
+  const key = getHlsCacheKey(fileId, vcodec, acodec);
+  const cached = hlsHandlerCache.get(key);
+  const now = Date.now();
+  
+  if (cached && cached.expiresAt > now) {
+    return Promise.resolve(cached.handler);
+  }
+  
+  // Clean up expired entries
+  if (cached) {
+    cached.handler.close();
+    hlsHandlerCache.delete(key);
+  }
+  
+  return factory().then(handler => {
+    hlsHandlerCache.set(key, { handler, expiresAt: now + 5 * 60 * 1000 }); // 5 min TTL
+    return handler;
+  });
 }
 interface HeadChunkEntry {
   bytes: Uint8Array;
   totalSize: number;
   expiresAt: number;
 }
-const HEAD_CHUNK_BYTES = 2 * 1024 * 1024;
+
+// Pre-aquecimento: 8 MB para catálogo geral (4x maior que os 2 MB originais)
+// e 24 MB para mídias 4K / alto bitrate (>8 GB) para garantir carregamento instantâneo
+export const DEFAULT_HEAD_CHUNK_BYTES = 8 * 1024 * 1024;
+export const HEAD_CHUNK_4K_BYTES = 24 * 1024 * 1024;
+export const HEAD_CHUNK_BYTES = DEFAULT_HEAD_CHUNK_BYTES;
+
+export function getHeadChunkBytes(fileMeta?: Record<string, unknown> | null): number {
+  if (!fileMeta) return DEFAULT_HEAD_CHUNK_BYTES;
+  const resolution = String(fileMeta.resolution || '').toLowerCase();
+  const filename = String(fileMeta.filename || '').toLowerCase();
+  const sizeBytes = Number(fileMeta.size_bytes || 0);
+
+  const is4K =
+    resolution.includes('2160') ||
+    resolution.includes('4k') ||
+    filename.includes('2160p') ||
+    filename.includes('4k') ||
+    sizeBytes > 8 * 1024 * 1024 * 1024;
+
+  return is4K ? HEAD_CHUNK_4K_BYTES : DEFAULT_HEAD_CHUNK_BYTES;
+}
+
 const headChunkMemoryCache = new Map<string, HeadChunkEntry>();
 const headChunkInflight = new Set<string>();
 
 function setMemoryHeadChunk(fileId: string, bytes: Uint8Array, totalSize: number) {
-  if (headChunkMemoryCache.size >= 20 && !headChunkMemoryCache.has(fileId)) {
+  if (headChunkMemoryCache.size >= 30 && !headChunkMemoryCache.has(fileId)) {
     const oldestKey = headChunkMemoryCache.keys().next().value;
     if (oldestKey) headChunkMemoryCache.delete(oldestKey);
   }
@@ -50,12 +100,13 @@ async function populateHeadChunkInBackground(
   try {
     const r2Key = `head-chunks/${fileId}.bin`;
     const knownTotalSize = Number(mediaFile.size_bytes || 0);
+    const targetHeadBytes = getHeadChunkBytes(mediaFile);
 
-    if (env.MEDIA_BUCKET && knownTotalSize > HEAD_CHUNK_BYTES) {
+    if (env.MEDIA_BUCKET && knownTotalSize > targetHeadBytes) {
       const existingR2 = await env.MEDIA_BUCKET.get(r2Key);
       if (existingR2) {
         const buf = new Uint8Array(await existingR2.arrayBuffer());
-        if (buf.byteLength > 0) {
+        if (buf.byteLength >= targetHeadBytes || buf.byteLength >= knownTotalSize) {
           setMemoryHeadChunk(fileId, buf, knownTotalSize);
           return;
         }
@@ -65,7 +116,7 @@ async function populateHeadChunkInBackground(
     const provider = String(mediaFile.provider);
     const externalFileId = String(mediaFile.external_file_id);
     const shareUrl = String(mediaFile.share_url || '');
-    const rangeStr = `bytes=0-${HEAD_CHUNK_BYTES - 1}`;
+    const rangeStr = `bytes=0-${targetHeadBytes - 1}`;
 
     const res =
       provider === 'onedrive'
@@ -77,7 +128,7 @@ async function populateHeadChunkInBackground(
     const cr = res.headers.get('Content-Range') || res.headers.get('content-range') || '';
     const totalMatch = cr.match(/\/(\d+)$/);
     const totalSize = totalMatch ? Number(totalMatch[1]) : knownTotalSize;
-    if (!totalSize || totalSize <= HEAD_CHUNK_BYTES) return;
+    if (!totalSize || totalSize <= targetHeadBytes) return;
 
     const bytes = new Uint8Array(await res.arrayBuffer());
     if (bytes.byteLength < 65536) return;
@@ -91,6 +142,7 @@ async function populateHeadChunkInBackground(
         customMetadata: {
           totalSize: String(totalSize),
           container: String(mediaFile.container || 'mkv'),
+          is4K: String(targetHeadBytes === HEAD_CHUNK_4K_BYTES),
         },
       });
     }
@@ -99,6 +151,9 @@ async function populateHeadChunkInBackground(
   } finally {
     headChunkInflight.delete(fileId);
   }
+interface MediaFileMeta {
+  row: Record<string, unknown>;
+  expiresAt: number;
 }
 
 export const streamRoutes = new Hono<{ Bindings: Env }>();
@@ -183,6 +238,10 @@ streamRoutes.on(['GET', 'HEAD'], '/api/stream/:fileId', async (c) => {
     mediaFileMetaCache.set(fileId, { row: mediaFile, expiresAt: Date.now() + 30 * 60 * 1000 });
   }
 
+  if (!mediaFile) {
+    return c.json({ error: 'Arquivo de mídia não encontrado no catálogo.' }, 404);
+  }
+
   const provider = String(mediaFile.provider);
   const externalFileId = String(mediaFile.external_file_id);
   const shareUrl = String(mediaFile.share_url || '');
@@ -216,20 +275,21 @@ streamRoutes.on(['GET', 'HEAD'], '/api/stream/:fileId', async (c) => {
     });
   }
 
-  // Fast-Start Edge Prefix Path
+  // Fast-Start Edge Prefix Path (adaptativo: 24 MB para 4K, 8 MB para geral)
+  const targetHeadBytes = getHeadChunkBytes(mediaFile);
   const rangeMatch = rangeHeader ? rangeHeader.match(/^bytes=(\d+)-(\d*)$/) : null;
   const reqStart = rangeMatch ? Number(rangeMatch[1]) : 0;
   const reqEnd = rangeMatch && rangeMatch[2] ? Number(rangeMatch[2]) : undefined;
   const canServeFromHead =
     (!rangeHeader || Boolean(rangeMatch)) &&
-    reqStart < HEAD_CHUNK_BYTES &&
-    (reqEnd === undefined || reqEnd < HEAD_CHUNK_BYTES);
+    reqStart < targetHeadBytes &&
+    (reqEnd === undefined || reqEnd < targetHeadBytes);
 
   if (canServeFromHead) {
     let headEntry = headChunkMemoryCache.get(fileId);
     if ((!headEntry || Date.now() >= headEntry.expiresAt) && c.env.MEDIA_BUCKET) {
       const knownTotal = Number(mediaFile.size_bytes || 0);
-      if (knownTotal > HEAD_CHUNK_BYTES) {
+      if (knownTotal > targetHeadBytes) {
         try {
           const r2Obj = await c.env.MEDIA_BUCKET.get(`head-chunks/${fileId}.bin`);
           if (r2Obj) {
@@ -474,22 +534,33 @@ streamRoutes.get('/api/stream/hls/:fileId/playlist.m3u8', async (c) => {
         ? await fetchOneDriveStream(externalFileId, shareUrl, rangeHeader, c.env.MINATTO_KV)
         : await fetchGDriveStream(externalFileId, rangeHeader, c.env.GDRIVE_API_KEY, c.env.MINATTO_KV);
 
-    const hlsHandler = new HlsEndpointHandler();
-
-    await hlsHandler.initialize(upstreamResponse, {
-      videoCodec: detectedVideoCodec,
-      audioCodec: detectedAudioCodec,
-      segmentDuration: 6,
-      maxSegments: 10,
+    // Get or create HLS handler from cache
+    const hlsHandler = await getOrCreateHlsHandler(fileId, vcodec, acodec, async () => {
+      const handler = new HlsEndpointHandler();
+      await handler.initialize(upstreamResponse, {
+        videoCodec: detectedVideoCodec,
+        audioCodec: detectedAudioCodec,
+        segmentDuration: 6,
+        maxSegments: 10,
+      });
+      return handler;
     });
 
-    const playlist = generateMediaPlaylist({
-      version: 6,
-      targetDuration: 6,
-      mediaSequence: 0,
-      segments: [],
-      isEndOfStream: false,
-    });
+    // Wait for at least first segment to be produced (max 5 seconds)
+    let waited = 0;
+    while (hlsHandler.getSegment(0) === null && waited < 5000) {
+      await new Promise(r => setTimeout(r, 200));
+      waited += 200;
+    }
+
+    const playlist = hlsHandler.generatePlaylist();
+    
+    // If no segments produced, return error so client falls back to WebCodecs
+    if (!playlist.includes('#EXTINF')) {
+      hlsHandler.close();
+      hlsHandlerCache.delete(getHlsCacheKey(fileId, vcodec, acodec));
+      return c.json({ error: 'HLS transmuxing não produziu segmentos. Use WebCodecs.' }, 503);
+    }
 
     const headers = new Headers();
     headers.set('Content-Type', 'application/vnd.apple.mpegurl');
@@ -509,22 +580,52 @@ streamRoutes.get('/api/stream/hls/:fileId/playlist.m3u8', async (c) => {
   }
 });
 
-streamRoutes.get('/api/stream/hls/:fileId/segment/:segmentNumber.m4s', async (c) => {
-  return c.json({ error: 'Segmento não disponível. Use o stream direto para desktop.' }, 404);
+streamRoutes.get('/api/stream/hls/:fileId/segment/:segmentNumber', async (c) => {
+  const fileId = c.req.param('fileId');
+  const segmentNumberParam = c.req.param('segmentNumber');
+  const segmentNumber = parseInt(segmentNumberParam.replace('.m4s', ''), 10);
+  const vcodec = c.req.query('vcodec') || 'avc1';
+  const acodec = c.req.query('acodec') || 'mp4a.40.2';
+
+  if (isNaN(segmentNumber)) {
+    return c.json({ error: 'Número de segmento inválido' }, 400);
+  }
+
+  const key = getHlsCacheKey(fileId, vcodec, acodec);
+  const cached = hlsHandlerCache.get(key);
+  
+  if (!cached || cached.expiresAt < Date.now()) {
+    return c.json({ error: 'Segmento não encontrado. Playlist pode ter expirado.' }, 404);
+  }
+
+  const segment = cached.handler.getSegment(segmentNumber);
+  
+  if (!segment) {
+    // Segment not ready yet - return 404 so client retries
+    return c.json({ error: 'Segmento ainda não disponível. Tente novamente.' }, 404);
+  }
+
+  const headers = new Headers();
+  headers.set('Content-Type', 'video/mp4');
+  headers.set('Access-Control-Allow-Origin', '*');
+  headers.set('Accept-Ranges', 'bytes');
+  headers.set('Content-Length', String(segment.byteLength));
+  headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+
+  return new Response(segment as unknown as BodyInit, { headers, status: 200 });
 });
 
 /**
- * Warm head chunks for fast-start streaming
+ * Warm head chunks for fast-start streaming (24 MB para 4K, 8 MB para catálogo geral)
  */
-export async function warmAllMovieHeadChunks(env: Env, limit = 15): Promise<{ warmedCount: number; logs: string[] }> {
+export async function warmAllMovieHeadChunks(env: Env, limit = 20): Promise<{ warmedCount: number; logs: string[] }> {
   const sql = getDb(env);
   const rows = await sql`
     SELECT mf.*, ss.provider, ss.share_url, mi.title
     FROM media_files mf
     JOIN storage_sources ss ON ss.id = mf.storage_source_id
     LEFT JOIN media_items mi ON mi.id = mf.media_item_id
-    WHERE ss.provider = 'onedrive'
-    ORDER BY mf.created_at DESC
+    ORDER BY mf.size_bytes DESC, mf.created_at DESC
     LIMIT ${limit}
   `;
 
@@ -534,10 +635,12 @@ export async function warmAllMovieHeadChunks(env: Env, limit = 15): Promise<{ wa
   for (const row of rows) {
     const fid = String(row.id);
     const meta = row as Record<string, unknown>;
+    const is4K = getHeadChunkBytes(meta) === HEAD_CHUNK_4K_BYTES;
+    const sizeLabel = is4K ? '24 MB (4K)' : '8 MB (Geral)';
     await populateHeadChunkInBackground(fid, meta, env);
     if (headChunkMemoryCache.has(fid)) {
       warmedCount++;
-      logs.push(`⚡ Fast-Start R2 (2 MB) pronto: ${String(row.title || row.filename)} (${String(row.provider).toUpperCase()})`);
+      logs.push(`⚡ Fast-Start R2 (${sizeLabel}) pronto: ${String(row.title || row.filename)} (${String(row.provider).toUpperCase()})`);
     }
   }
 

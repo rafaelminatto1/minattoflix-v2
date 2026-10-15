@@ -15,15 +15,126 @@ import { storageRoutes } from './routes/storage';
 import { watchPartyRoutes } from './routes/watch-party';
 import { mediaRoutes } from './routes/media';
 
+// Structured logging utility
+function createLogger(c: Context) {
+  const requestId = crypto.randomUUID().slice(0, 8);
+  const startTime = Date.now();
+  
+  return {
+    info: (event: string, data?: Record<string, unknown>) => {
+      console.log(JSON.stringify({
+        level: 'info',
+        event,
+        requestId,
+        path: c.req.path,
+        method: c.req.method,
+        durationMs: Date.now() - startTime,
+        ...data,
+      }));
+    },
+    warn: (event: string, data?: Record<string, unknown>) => {
+      console.warn(JSON.stringify({
+        level: 'warn',
+        event,
+        requestId,
+        path: c.req.path,
+        method: c.req.method,
+        durationMs: Date.now() - startTime,
+        ...data,
+      }));
+    },
+    error: (event: string, error: Error | unknown, data?: Record<string, unknown>) => {
+      console.error(JSON.stringify({
+        level: 'error',
+        event,
+        requestId,
+        path: c.req.path,
+        method: c.req.method,
+        durationMs: Date.now() - startTime,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        ...data,
+      }));
+    },
+  };
+}
+
+// Health check endpoint
 const app = new Hono<{ Bindings: Env }>();
 
+// Health check - must be before CORS for monitoring
+app.get('/api/health', async (c) => {
+  const logger = createLogger(c);
+  const startTime = Date.now();
+  
+  try {
+    // Check KV
+    await c.env.MINATTO_KV.get('health-check');
+    const kvLatency = Date.now() - startTime;
+    
+    // Check R2
+    const r2Start = Date.now();
+    await c.env.MEDIA_BUCKET.head('health-check');
+    const r2Latency = Date.now() - r2Start;
+    
+    // Check Hyperdrive (DB)
+    const dbStart = Date.now();
+    const db = getDb(c.env);
+    await db`SELECT 1`;
+    const dbLatency = Date.now() - dbStart;
+    
+    const totalLatency = Date.now() - startTime;
+    
+    logger.info('health_check', { kvLatency, r2Latency, dbLatency, totalLatency });
+    
+    return c.json({
+      status: 'healthy',
+      timestamp: new Date().toISOString(),
+      version: '2.0.0',
+      latency: {
+        kv: kvLatency,
+        r2: r2Latency,
+        db: dbLatency,
+        total: totalLatency,
+      },
+    });
+  } catch (error) {
+    logger.error('health_check_failed', error as Error);
+    return c.json({
+      status: 'unhealthy',
+      timestamp: new Date().toISOString(),
+      error: error instanceof Error ? error.message : String(error),
+    }, 503);
+  }
+});
+
+// Logging middleware
+app.use('/api/*', async (c, next) => {
+  const logger = createLogger(c);
+  const startTime = Date.now();
+  
+  logger.info('request_start', {
+    userAgent: c.req.header('User-Agent'),
+    cfRay: c.req.header('CF-Ray'),
+    country: c.req.header('CF-IPCountry'),
+  });
+  
+  try {
+    await next();
+    const duration = Date.now() - startTime;
+    const status = c.res.status;
+    
+    logger.info('request_complete', { status, durationMs: duration });
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    logger.error('request_error', error as Error, { durationMs: duration });
+    throw error;
+  }
+});
+
 app.onError((error, c) => {
-  console.error(JSON.stringify({
-    error: error instanceof Error ? error.message : String(error),
-    stack: error instanceof Error ? error.stack : undefined,
-    path: c.req.path,
-    method: c.req.method,
-  }));
+  const logger = createLogger(c);
+  logger.error('unhandled_error', error as Error);
   return c.json({ error: 'Não foi possível concluir a operação. Tente novamente.' }, 500);
 });
 

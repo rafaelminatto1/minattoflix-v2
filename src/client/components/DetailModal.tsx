@@ -14,6 +14,7 @@ import {
   Link2,
   Sparkles,
   CheckCircle2,
+  AlertTriangle,
 } from 'lucide-react';
 import type { AudioTrack, EpisodeItem, MediaItem, SubtitleTrack } from '../types';
 
@@ -39,6 +40,36 @@ export const DetailModal: React.FC<DetailModalProps> = ({
   onToggleMyList,
   onRefreshCatalog,
 }) => {
+  // Guard: Movie has no files available
+  if (!item.files?.length) {
+    return (
+      <div className="fixed inset-0 bg-black/95 flex flex-col items-center justify-center gap-6 p-6 z-50">
+        <AlertTriangle className="w-16 h-16 text-amber-400" />
+        <div className="text-center max-w-md">
+          <h2 className="text-2xl font-bold text-white mb-2">Arquivo não disponível</h2>
+          <p className="text-zinc-400 mb-6">
+            Este título ainda não tem um arquivo de vídeo sincronizado.
+            <br />Execute a sincronização na nuvem ou verifique se o arquivo existe no Google Drive/OneDrive.
+          </p>
+          <div className="flex gap-3 justify-center">
+            <button
+              onClick={onClose}
+              className="bg-[#E50914] text-white font-bold px-6 py-3 rounded cursor-pointer"
+            >
+              Fechar
+            </button>
+            <button
+              onClick={onRefreshCatalog}
+              className="bg-zinc-800 text-white font-bold px-6 py-3 rounded cursor-pointer"
+            >
+              Sincronizar Catálogo
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const initialFile = item.files.find((f) => f.provider === 'onedrive') || item.files[0];
   const [selectedFileId, setSelectedFileId] = useState<string>(initialFile?.id || '');
   const primaryFile = item.files.find((f) => f.id === selectedFileId) || initialFile;

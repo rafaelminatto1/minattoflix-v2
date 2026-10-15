@@ -10,7 +10,9 @@ import {
 } from '../services/mkv-ebml-probe';
 import { fetchGDriveStream } from '../services/gdrive';
 import { fetchOneDriveStream } from '../services/onedrive';
+import { warmAllMovieHeadChunks } from './stream';
 
+export { warmAllMovieHeadChunks };
 export const scannerRoutes = new Hono<{ Bindings: Env }>();
 
 const genericFolderRe = /^(filmes|onedrive\s*filmes|gdrive\s*filmes|movies|series|séries|videos|vídeos)$/i;
@@ -291,19 +293,47 @@ export async function executeCloudScannerSync(env: Env) {
       }
     }
 
+    // Cleanup: remove media_files that no longer exist in the cloud source
+    // Collect all external_file_ids that were found in this sync
+    const foundExternalFileIds = new Set<string>();
+    for (const bundle of bundles) {
+      for (const file of bundle.files) {
+        if (!file.isFolder) {
+          foundExternalFileIds.add(file.id);
+        }
+      }
+    }
+
+    if (foundExternalFileIds.size > 0) {
+      // Get all media_files for this storage source
+      const existingFiles = await sql`
+        SELECT id, external_file_id FROM media_files WHERE storage_source_id = ${sourceId}
+      `;
+
+      const toDelete = existingFiles
+        .map((row) => ({ id: String(row.id), externalFileId: String(row.external_file_id) }))
+        .filter((row) => !foundExternalFileIds.has(row.externalFileId));
+
+      if (toDelete.length > 0) {
+        const idsToDelete = toDelete.map((r) => r.id);
+        // Delete related tracks first (audio_tracks and subtitle_tracks reference media_files)
+        await sql`DELETE FROM audio_tracks WHERE media_file_id = ANY(${idsToDelete})`;
+        await sql`DELETE FROM subtitle_tracks WHERE media_file_id = ANY(${idsToDelete})`;
+        // Then delete the media_files
+        await sql`DELETE FROM media_files WHERE id = ANY(${idsToDelete})`;
+        logs.push(`Limpeza: ${toDelete.length} arquivo(s) removido(s) que não existem mais no ${source.name}`);
+      }
+    }
+
     await sql`UPDATE storage_sources SET last_synced_at = NOW() WHERE id = ${sourceId}`;
     logs.push(`Sincronizado: ${source.name} (${bundles.length} pastas verificadas)`);
   }
 
-  // Self-heal: remove orphan generic folder items
-  try {
-    await sql`
-      DELETE FROM media_items
-      WHERE LOWER(title) IN ('filmes', 'onedrive filmes', 'gdrive filmes', 'movies', 'series', 'séries')
-        AND id NOT IN (SELECT DISTINCT media_item_id FROM media_files WHERE media_item_id IS NOT NULL)
-    `;
-  } catch {
-    // Ignore cleanup errors
+  // Auto-heal covers: search for posters for movies that currently lack covers
+  const coverHealing = await healMissingMediaCovers(env, 20);
+  if (coverHealing.healedCount > 0) {
+    logs.push(`🎨 Capas: ${coverHealing.healedCount} títulos atualizados com capas em alta definição.`);
+    logs.push(...coverHealing.logs);
   }
 
   return {
@@ -311,41 +341,77 @@ export async function executeCloudScannerSync(env: Env) {
     discoveredFolders,
     syncedVideos,
     syncedExternalTracks,
+    healedCovers: coverHealing.healedCount,
     logs,
   };
 }
 
 /**
- * Warm head chunks for fast-start streaming
+ * Auto-healing job to find and enrich covers for media items that currently have
+ * missing covers or fallback unsplash placeholders.
  */
-export async function warmAllMovieHeadChunks(env: Env, limit = 15): Promise<{ warmedCount: number; logs: string[] }> {
+export async function healMissingMediaCovers(env: Env, limit = 25): Promise<{ healedCount: number; logs: string[] }> {
   const sql = getDb(env);
-  const rows = await sql`
-    SELECT mf.*, ss.provider, ss.share_url, mi.title
-    FROM media_files mf
-    JOIN storage_sources ss ON ss.id = mf.storage_source_id
-    LEFT JOIN media_items mi ON mi.id = mf.media_item_id
-    WHERE ss.provider = 'onedrive'
-    ORDER BY mf.created_at DESC
-    LIMIT ${limit}
-  `;
-
-  let warmedCount = 0;
   const logs: string[] = [];
+  let healedCount = 0;
 
-  for (const row of rows) {
-    const fid = String(row.id);
-    const meta = row as Record<string, unknown>;
-    warmedCount++;
-    logs.push(`⚡ Fast-Start R2 (2 MB) pronto: ${String(row.title || row.filename)} (${String(row.provider).toUpperCase()})`);
+  try {
+    const items = await sql`
+      SELECT id, title, original_title, release_year, poster_url
+      FROM media_items
+      WHERE poster_url ILIKE '%unsplash%'
+         OR poster_url IS NULL
+         OR poster_url = ''
+         OR poster_url ILIKE '%placeholder%'
+      ORDER BY created_at DESC
+      LIMIT ${limit}
+    `;
+
+    for (const item of items) {
+      try {
+        const meta = await enrichMediaMetadata(
+          String(item.title),
+          item.release_year ? Number(item.release_year) : null,
+          env.TMDB_API_KEY,
+          env.AI
+        );
+
+        if (meta.posterUrl && !meta.posterUrl.includes('unsplash')) {
+          await sql`
+            UPDATE media_items
+            SET
+              poster_url = ${meta.posterUrl},
+              backdrop_url = ${meta.backdropUrl || meta.posterUrl},
+              title = COALESCE(NULLIF(${meta.title}, ''), title),
+              original_title = COALESCE(NULLIF(${meta.originalTitle}, ''), original_title),
+              overview = CASE WHEN overview LIKE '%sincronizado diretamente%' OR overview IS NULL THEN ${meta.overview} ELSE overview END,
+              tagline = CASE WHEN tagline LIKE '%Disponível na sua nuvem%' OR tagline IS NULL THEN ${meta.tagline} ELSE tagline END,
+              rating = CASE WHEN rating = 0 OR rating = 8.5 THEN ${meta.rating} ELSE rating END,
+              updated_at = NOW()
+            WHERE id = ${item.id}
+          `;
+          healedCount++;
+          logs.push(`✓ Capa atualizada: ${item.title} -> ${meta.originalTitle || meta.title}`);
+        }
+      } catch (err) {
+        logs.push(`Aviso ao buscar capa de ${item.title}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  } catch (err) {
+    logs.push(`Falha no auto-healing de capas: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  return { warmedCount, logs };
+  return { healedCount, logs };
 }
 
 scannerRoutes.post('/api/scanner/sync', async (c) => {
   const result = await executeCloudScannerSync(c.env);
   c.executionCtx.waitUntil(warmAllMovieHeadChunks(c.env, 10).catch(() => {}));
+  return c.json(result);
+});
+
+scannerRoutes.post('/api/scanner/enrich-covers', async (c) => {
+  const result = await healMissingMediaCovers(c.env, 50);
   return c.json(result);
 });
 

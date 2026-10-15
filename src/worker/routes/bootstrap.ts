@@ -262,7 +262,7 @@ bootstrapRoutes.get('/api/cloudflare/status', async (c) => {
     hyperdriveConnected: Boolean(c.env.HYPERDRIVE),
     workersAiConnected: Boolean(c.env.AI),
     durableObjectsConnected: Boolean(c.env.WATCH_PARTY),
-    cronSchedule: '*/15 * * * * (A cada 15 minutos)',
+    cronSchedule: '*/5 * * * * (A cada 5 minutos)',
     regionHint: 'South America (sa-east-1 / GRU Edge)',
   });
 });

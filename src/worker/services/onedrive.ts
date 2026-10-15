@@ -298,11 +298,11 @@ export async function fetchOneDriveStream(
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
   });
 
-  // Bound open-ended ranges (e.g., bytes=0-) to 4 MB chunks for instant Time-To-First-Frame, while preserving explicit ranges
+  // Bound open-ended ranges (e.g., bytes=0-) to 8 MB chunks for fast Time-To-First-Frame and solid buffer, while preserving explicit ranges
   const openEndedMatch = rangeHeader?.match(/^bytes=(\d+)-$/);
   if (openEndedMatch) {
     const start = Number(openEndedMatch[1]);
-    const end = start + 4 * 1024 * 1024 - 1;
+    const end = start + 8 * 1024 * 1024 - 1;
     reqHeaders.set('Range', `bytes=${start}-${end}`);
   } else if (rangeHeader) {
     reqHeaders.set('Range', rangeHeader);

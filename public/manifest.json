@@ -7,6 +7,7 @@
   "background_color": "#141414",
   "theme_color": "#E50914",
   "orientation": "any",
+  "categories": ["entertainment", "video"],
   "icons": [
     {
       "src": "https://api.dicebear.com/9.x/shapes/svg?seed=MinattoFlix&backgroundColor=e50914",
@@ -20,5 +21,30 @@
       "type": "image/svg+xml",
       "purpose": "any maskable"
     }
-  ]
+  ],
+  "shortcuts": [
+    {
+      "name": "Continuar Assistindo",
+      "short_name": "Continuar",
+      "description": "Retome de onde parou",
+      "url": "/?continue=true",
+      "icons": [{ "src": "https://api.dicebear.com/9.x/shapes/svg?seed=continue&backgroundColor=e50914", "sizes": "192x192" }]
+    },
+    {
+      "name": "Meus Filmes",
+      "short_name": "Filmes",
+      "description": "Browse your movie library",
+      "url": "/?tab=movies",
+      "icons": [{ "src": "https://api.dicebear.com/9.x/shapes/svg?seed=movies&backgroundColor=e50914", "sizes": "192x192" }]
+    },
+    {
+      "name": "Minhas Séries",
+      "short_name": "Séries",
+      "description": "Browse your TV shows",
+      "url": "/?tab=series",
+      "icons": [{ "src": "https://api.dicebear.com/9.x/shapes/svg?seed=series&backgroundColor=e50914", "sizes": "192x192" }]
+    }
+  ],
+  "screenshots": [],
+  "prefer_related_applications": false
 }

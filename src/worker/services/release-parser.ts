@@ -55,13 +55,27 @@ export function parseReleaseName(filename: string, folderName?: string): ParsedR
 
   const isForcedSubtitle = /\b(forced|forcada|forçada)\b/i.test(filename);
 
-  const sourceString = folderName && folderName.length > 3 ? folderName : filename.replace(/\.[a-z0-9]+$/i, '');
+  let sourceString = folderName && folderName.length > 3 ? folderName : filename.replace(/\.[a-z0-9]+$/i, '');
+  // Clean website advertising prefixes e.g. www UIndex org:
+  sourceString = sourceString.replace(/^www[\.\s_-]\w+[\.\s_-](?:org|com|net|to|me|info)[:\s_-]*/i, '');
 
-  // Check series pattern S01E01
-  const seriesMatch = sourceString.match(/\bS(\d{1,2})E(\d{1,3})\b/i);
-  const type: 'movie' | 'series' = seriesMatch ? 'series' : 'movie';
-  const seasonNumber = seriesMatch ? parseInt(seriesMatch[1], 10) : null;
+  // Check series pattern S01E01, S01EP01, or S104
+  const seriesMatch =
+    sourceString.match(/\bS(\d{1,2})(?:E|EP)(\d{1,3})\b/i) ||
+    sourceString.match(/\bS(\d{1})(\d{2})\b/i) ||
+    filename.match(/\bS(\d{1,2})(?:E|EP)(\d{1,3})\b/i) ||
+    filename.match(/\bS(\d{1})(\d{2})\b/i);
+
+  const isSeriesFolder = /\b(\d+ª?\s+temporada|temporada\s+\d+|season\s+\d+)\b/i.test(sourceString);
+  const type: 'movie' | 'series' = seriesMatch || isSeriesFolder ? 'series' : 'movie';
+  let seasonNumber = seriesMatch ? parseInt(seriesMatch[1], 10) : null;
   const episodeNumber = seriesMatch ? parseInt(seriesMatch[2], 10) : null;
+  if (!seasonNumber && isSeriesFolder) {
+    const sMatch = sourceString.match(/\b(?:(\d+)ª?\s+temporada|temporada\s+(\d+)|season\s+(\d+))\b/i);
+    if (sMatch) {
+      seasonNumber = parseInt(sMatch[1] || sMatch[2] || sMatch[3], 10);
+    }
+  }
 
   // Resolution
   let resolution: ParsedReleaseInfo['resolution'] = '1080p';
@@ -88,12 +102,13 @@ export function parseReleaseName(filename: string, folderName?: string): ParsedR
   const isDualAudio = /\b(dual|multi)\b/i.test(sourceString);
 
   // Extract Year (1950 - 2030)
-  const yearMatch = sourceString.match(/\b(19\d{2}|20[0-3]\d)\b/);
+  const normalizedForWordBoundary = sourceString.replace(/_/g, ' ');
+  const yearMatch = normalizedForWordBoundary.match(/\b(19\d{2}|20[0-3]\d)\b/);
   const year = yearMatch ? parseInt(yearMatch[1], 10) : null;
 
   // Extract clean title up to the year or technical tag
-  let rawTitle = sourceString;
-  const stopPattern = /\b(19\d{2}|20[0-3]\d|2160p|1080p|720p|480p|WEB-?DL|WEBRip|BluRay|BDRip|HDRip|x264|x265|HEVC|DUAL|DUB|LEG|S\d{1,2}E\d{1,2})\b/i;
+  let rawTitle = normalizedForWordBoundary;
+  const stopPattern = /\b(19\d{2}|20[0-3]\d|2160p|1080p|720p|480p|WEB-?DL|WEBRip|BluRay|BDRip|HDRip|x264|x265|HEVC|DUAL|DUB|LEG|S\d{1,2}(?:E|EP)?\d{1,3}|\d+ª?\s+temporada|temporada\s+\d+|season\s+\d+)\b/i;
   const stopMatch = rawTitle.match(stopPattern);
   if (stopMatch && stopMatch.index && stopMatch.index > 1) {
     rawTitle = rawTitle.slice(0, stopMatch.index);
@@ -101,8 +116,9 @@ export function parseReleaseName(filename: string, folderName?: string): ParsedR
 
   const cleanTitle = rawTitle
     .replace(/\./g, ' ')
-    .replace(/_/g, ' ')
     .replace(/\s+-\s+/g, ': ')
+    .replace(/[\(\[\{]/g, ' ')
+    .replace(/[\)\]\}]/g, ' ')
     .replace(/\s+/g, ' ')
     .replace(/[-:.\s]+$/, '')
     .trim();
