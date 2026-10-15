@@ -75,6 +75,8 @@ interface HlsStatic {
   Events: {
     MANIFEST_PARSED: string;
     ERROR: string;
+    LEVEL_SWITCHED?: string;
+    [key: string]: string | undefined;
   };
   ErrorTypes: {
     NETWORK_ERROR: string;
@@ -102,6 +104,8 @@ interface HlsInstance {
   destroy(): void;
   startLoad(): void;
   recoverMediaError(): void;
+  levels?: Array<{ height: number; width: number; bitrate: number; name?: string }>;
+  currentLevel?: number;
 }
 
 let Hls: HlsStatic | null = null;
@@ -546,7 +550,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
   const [hlsInstance, setHlsInstance] = useState<HlsInstance | 'native' | null>(null);
   const [useHls, setUseHls] = useState(false);
   const [hlsError, setHlsError] = useState<string | null>(null);
-  const [hlsLevels, setHlsLevels] = useState<Array<{height: number, bitrate: number, width: number}>>([]);
+  const [hlsLevels, setHlsLevels] = useState<Array<{ height: number; bitrate: number; width: number; index?: number; name?: string }>>([]);
   const [currentQuality, setCurrentQuality] = useState<string>(() => localStorage.getItem('minattoflix_quality') || 'auto');
   const [showQualityMenu, setShowQualityMenu] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
@@ -617,7 +621,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
     }
 
     // On iOS, ALWAYS use native video fullscreen (webkitEnterFullscreen) for true fullscreen
-    const nativeVideo = videoRef.current as FullscreenVideo | null;
+    const nativeVideo = videoRef.current as (HTMLVideoElement & { webkitEnterFullscreen?: () => void }) | null;
     if (isIosWebKit() && nativeVideo?.webkitEnterFullscreen) {
       try {
         nativeVideo.webkitEnterFullscreen();
@@ -986,7 +990,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
               setHlsInstance(hls);
               setHlsError(null);
               // Capture available quality levels
-              const levels = hls.levels.map((l, i) => ({
+              const levels = (hls?.levels || []).map((l, i) => ({
                 height: l.height,
                 width: l.width,
                 bitrate: l.bitrate,
@@ -998,16 +1002,18 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
           });
 
           // Handle level switching for manual quality selection
-          hls.on(HlsClass.Events.LEVEL_SWITCHED, (_event: unknown, data: unknown) => {
-            if (!mounted) return;
-            const levelData = data as { level: number } | undefined;
-            if (levelData && hls) {
-              const level = hls.levels[levelData.level];
-              if (level) {
-                setCurrentQuality(`${level.height}p`);
+          if (HlsClass.Events.LEVEL_SWITCHED) {
+            hls.on(HlsClass.Events.LEVEL_SWITCHED, (_event: unknown, data: unknown) => {
+              if (!mounted) return;
+              const levelData = data as { level: number } | undefined;
+              if (levelData && hls?.levels) {
+                const level = hls.levels[levelData.level];
+                if (level) {
+                  setCurrentQuality(`${level.height}p`);
+                }
               }
-            }
-          });
+            });
+          }
 
           hls.on(HlsClass.Events.ERROR, (_event: unknown, data: unknown) => {
             if (!mounted) return;
@@ -1692,14 +1698,14 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
   };
 
   const setHlsQuality = (quality: string) => {
-    if (!hlsInstance || hlsInstance === 'native' || !Hls.isSupported()) return;
+    if (!hlsInstance || hlsInstance === 'native' || !Hls?.isSupported()) return;
     const hls = hlsInstance as HlsInstance;
     if (quality === 'auto') {
-      hls.currentLevel = -1;
+      if (hls) hls.currentLevel = -1;
       setCurrentQuality('auto');
       return;
     }
-    const levelIdx = hls.levels.findIndex(l => `${l.height}p` === quality);
+    const levelIdx = (hls.levels || []).findIndex(l => `${l.height}p` === quality);
     if (levelIdx >= 0) {
       hls.currentLevel = levelIdx;
       setCurrentQuality(quality);
@@ -1877,9 +1883,10 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
                 setBufferedEnd(v.buffered.end(v.buffered.length - 1));
               }
               // Auto-next episode: trigger countdown 30s before end
-              if (v.duration && v.currentTime >= v.duration - 30 && !showNextEpisodeCountdown && item.episode_id) {
+              const episodeId = (item as unknown as { episode_id?: string }).episode_id;
+              if (v.duration && v.currentTime >= v.duration - 30 && !showNextEpisodeCountdown && episodeId) {
                 // Fetch next episode
-                fetch(`/api/media/next-episode/${item.episode_id}`)
+                fetch(`/api/media/next-episode/${episodeId}`)
                   .then(r => r.ok ? r.json() : null)
                   .then(next => {
                     if (next) {
@@ -2073,7 +2080,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
               {nextEpisodeItem.title}
             </h3>
             <p className="text-xs text-zinc-400 mb-4">
-              Ep. {nextEpisodeItem.episode_number || '?'} • {nextEpisodeItem.season_number ? `Temporada ${nextEpisodeItem.season_number}` : ''}
+              Ep. {(nextEpisodeItem as unknown as { episode_number?: number }).episode_number || '?'} • {(nextEpisodeItem as unknown as { season_number?: number }).season_number ? `Temporada ${(nextEpisodeItem as unknown as { season_number?: number }).season_number}` : ''}
             </p>
             <div className="flex gap-2">
               <button
@@ -2112,12 +2119,12 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
       )}
 
       {/* Skip Outro Button (appears near end) */}
-      {playing && !showAudioSubMenu && !showWatchParty && item.duration_seconds && currentTime > (item.duration_seconds - 180) && (
+      {playing && !showAudioSubMenu && !showWatchParty && duration && currentTime > (duration - 180) && (
         <div className="player-skip-outro absolute bottom-24 sm:bottom-28 left-4 md:left-12 z-30 animate-fadeIn safe-left safe-bottom">
           <button
             onClick={() => {
               const detectedOutroStart = (window as any).__detectedOutroStart;
-              const targetTime = detectedOutroStart ? detectedOutroStart : item.duration_seconds - 60;
+              const targetTime = detectedOutroStart ? detectedOutroStart : duration - 60;
               if (targetTime > currentTime) {
                 skipSeconds(targetTime - currentTime);
               }

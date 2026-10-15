@@ -1,7 +1,7 @@
 import { Component, type ReactNode } from 'react';
 
 export class ErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean; error?: Error }> {
-  state = { failed: false, error: undefined };
+  state: { failed: boolean; error?: Error } = { failed: false, error: undefined };
   static getDerivedStateFromError(error: Error) { return { failed: true, error }; }
   render() {
     if (this.state.failed) return (

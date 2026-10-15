@@ -151,6 +151,8 @@ async function populateHeadChunkInBackground(
   } finally {
     headChunkInflight.delete(fileId);
   }
+}
+
 interface MediaFileMeta {
   row: Record<string, unknown>;
   expiresAt: number;

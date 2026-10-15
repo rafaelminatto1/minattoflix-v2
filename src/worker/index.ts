@@ -69,12 +69,12 @@ app.get('/api/health', async (c) => {
   
   try {
     // Check KV
-    await c.env.MINATTO_KV.get('health-check');
+    if (c.env.MINATTO_KV) await c.env.MINATTO_KV.get('health-check');
     const kvLatency = Date.now() - startTime;
     
     // Check R2
     const r2Start = Date.now();
-    await c.env.MEDIA_BUCKET.head('health-check');
+    if (c.env.MEDIA_BUCKET) await c.env.MEDIA_BUCKET.get('health-check');
     const r2Latency = Date.now() - r2Start;
     
     // Check Hyperdrive (DB)
