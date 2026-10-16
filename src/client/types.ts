@@ -146,3 +146,20 @@ export interface BootstrapResponse {
   genres: Genre[];
   catalog: MediaItem[];
 }
+
+export interface DownloadJob {
+  id: string;
+  title: string;
+  media_type: 'movie' | 'series';
+  tmdb_id?: number | null;
+  file_name?: string | null;
+  file_size_bytes?: number | null;
+  status: 'queued' | 'dispatching' | 'downloading' | 'uploading_to_onedrive' | 'completed' | 'failed' | string;
+  progress_percent: number;
+  download_speed?: string | null;
+  github_run_id?: number | null;
+  error_message?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+

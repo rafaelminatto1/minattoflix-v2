@@ -1,0 +1,109 @@
+name: Ingest Media to OneDrive
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: 'ID do job no banco Neon (download_jobs)'
+        required: true
+        type: string
+      title:
+        description: 'Título da mídia (ex: Interestelar 2014)'
+        required: true
+        type: string
+      folder_category:
+        description: 'Subpasta de destino no OneDrive (ex: Filmes ou Séries)'
+        required: false
+        default: 'Filmes'
+        type: string
+      magnet_uri:
+        description: 'Magnet Link do Torrent'
+        required: true
+        type: string
+      callback_url:
+        description: 'URL do Webhook do MinattoFlix'
+        required: false
+        default: 'https://minattoflix-v2.rafalegollas.workers.dev/api/downloads/webhook'
+        type: string
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Instalar Dependências (aria2, rclone, jq, curl)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends aria2 rclone jq curl
+
+      - name: Notificar Início ao MinattoFlix
+        run: |
+          curl -s -X POST "${{ inputs.callback_url }}" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.MINATTO_WEBHOOK_SECRET }}" \
+            -d "{\"jobId\": \"${{ inputs.job_id }}\", \"status\": \"downloading\", \"progress\": 10, \"downloadSpeed\": \"Iniciando P2P...\"}" || true
+
+      - name: Executar Download P2P (aria2c)
+        id: download
+        run: |
+          mkdir -p ./downloads
+          echo "Iniciando download do magnet..."
+          aria2c \
+            --seed-time=0 \
+            --max-connection-per-server=16 \
+            --split=16 \
+            --summary-interval=10 \
+            --file-allocation=none \
+            --bt-stop-timeout=300 \
+            --dir=./downloads \
+            "${{ inputs.magnet_uri }}"
+
+      - name: Notificar Upload ao OneDrive
+        run: |
+          curl -s -X POST "${{ inputs.callback_url }}" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.MINATTO_WEBHOOK_SECRET }}" \
+            -d "{\"jobId\": \"${{ inputs.job_id }}\", \"status\": \"uploading_to_onedrive\", \"progress\": 70, \"downloadSpeed\": \"Transferindo para o OneDrive...\"}" || true
+
+      - name: Configurar e Executar Upload no OneDrive via Rclone
+        env:
+          RCLONE_CONF_DATA: ${{ secrets.RCLONE_ONEDRIVE_CONF }}
+        run: |
+          if [ -z "$RCLONE_CONF_DATA" ]; then
+            echo "::error::Secret RCLONE_ONEDRIVE_CONF não configurada no repositório GitHub!"
+            echo "Configure o secret RCLONE_ONEDRIVE_CONF com a saída de 'rclone config show onedrive'."
+            exit 1
+          fi
+
+          mkdir -p ~/.config/rclone
+          echo "$RCLONE_CONF_DATA" > ~/.config/rclone/rclone.conf
+
+          DEST_FOLDER="onedrive:${{ inputs.folder_category }}/${{ inputs.title }}"
+          echo "Enviando arquivos de ./downloads para $DEST_FOLDER"
+
+          rclone copy ./downloads "$DEST_FOLDER" \
+            --include "*.mkv" \
+            --include "*.mp4" \
+            --include "*.avi" \
+            --include "*.srt" \
+            --include "*.vtt" \
+            --transfers 4 \
+            --checkers 8 \
+            --stats 15s \
+            -v
+
+      - name: Notificar Sucesso ao MinattoFlix
+        if: success()
+        run: |
+          curl -s -X POST "${{ inputs.callback_url }}" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.MINATTO_WEBHOOK_SECRET }}" \
+            -d "{\"jobId\": \"${{ inputs.job_id }}\", \"status\": \"completed\", \"progress\": 100, \"downloadSpeed\": \"Concluído!\"}"
+
+      - name: Notificar Falha ao MinattoFlix
+        if: failure()
+        run: |
+          curl -s -X POST "${{ inputs.callback_url }}" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.MINATTO_WEBHOOK_SECRET }}" \
+            -d "{\"jobId\": \"${{ inputs.job_id }}\", \"status\": \"failed\", \"error\": \"Falha no runner do GitHub (ver logs da Action)\"}"

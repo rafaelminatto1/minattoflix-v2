@@ -15,8 +15,12 @@ import {
   Sparkles,
   Users,
   Clock,
+  Download,
+  Trash2,
+  ArrowDownCircle,
+  AlertCircle,
 } from 'lucide-react';
-import type { MediaItem, StorageSource } from '../types';
+import type { MediaItem, StorageSource, DownloadJob } from '../types';
 
 interface CloudManagerModalProps {
   storageSources: StorageSource[];
@@ -54,7 +58,7 @@ export const CloudManagerModal: React.FC<CloudManagerModalProps> = ({
   onAddStorageSource,
   isSyncing,
 }) => {
-  const [activeTab, setActiveTab] = useState<'sources' | 'cloudflare' | 'architecture'>('sources');
+  const [activeTab, setActiveTab] = useState<'sources' | 'downloads' | 'cloudflare' | 'architecture'>('sources');
   const [name, setName] = useState('');
   const [provider, setProvider] = useState<'gdrive' | 'onedrive'>('onedrive');
   const [shareUrl, setShareUrl] = useState('');
@@ -63,6 +67,79 @@ export const CloudManagerModal: React.FC<CloudManagerModalProps> = ({
   const [enrichingCovers, setEnrichingCovers] = useState(false);
   const [syncLogs, setSyncLogs] = useState<string[]>([]);
   const [cfStatus, setCfStatus] = useState<CloudflareEcosystemStatus | null>(null);
+
+  // Estados da aba de downloads (Ingestão de Torrents)
+  const [downloadJobs, setDownloadJobs] = useState<DownloadJob[]>([]);
+  const [loadingJobs, setLoadingJobs] = useState(false);
+  const [downloadTitle, setDownloadTitle] = useState('');
+  const [downloadMagnet, setDownloadMagnet] = useState('');
+  const [downloadCategory, setDownloadCategory] = useState<'Filmes' | 'Séries'>('Filmes');
+  const [requestingDownload, setRequestingDownload] = useState(false);
+  const [downloadMessage, setDownloadMessage] = useState<string | null>(null);
+
+  const loadDownloads = async () => {
+    setLoadingJobs(true);
+    try {
+      const res = await fetch(apiUrl('/api/downloads'));
+      const data = await res.json();
+      if (data && Array.isArray(data.jobs)) {
+        setDownloadJobs(data.jobs);
+      }
+    } catch (err) {
+      console.error('Falha ao carregar downloads', err);
+    } finally {
+      setLoadingJobs(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'downloads') {
+      loadDownloads();
+      const interval = setInterval(loadDownloads, 10000);
+      return () => clearInterval(interval);
+    }
+  }, [activeTab]);
+
+  const handleRequestDownload = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!downloadTitle.trim() || !downloadMagnet.trim()) return;
+    setRequestingDownload(true);
+    setDownloadMessage(null);
+    try {
+      const res = await fetch(apiUrl('/api/downloads/request'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: downloadTitle.trim(),
+          magnetUri: downloadMagnet.trim(),
+          mediaType: downloadCategory === 'Séries' ? 'series' : 'movie',
+          folderCategory: downloadCategory,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setDownloadTitle('');
+        setDownloadMagnet('');
+        setDownloadMessage('Download agendado! O runner do GitHub Actions iniciará o processamento.');
+        await loadDownloads();
+      } else {
+        setDownloadMessage(data.error || 'Erro ao agendar download.');
+      }
+    } catch (err) {
+      setDownloadMessage(err instanceof Error ? err.message : 'Erro ao conectar à API.');
+    } finally {
+      setRequestingDownload(false);
+    }
+  };
+
+  const handleDeleteJob = async (id: string) => {
+    try {
+      await fetch(apiUrl(`/api/downloads/${id}`), { method: 'DELETE' });
+      await loadDownloads();
+    } catch (err) {
+      console.error('Erro ao deletar job', err);
+    }
+  };
 
   useEffect(() => {
     fetch(apiUrl('/api/cloudflare/status'))
@@ -196,6 +273,17 @@ export const CloudManagerModal: React.FC<CloudManagerModalProps> = ({
             }`}
           >
             Pastas Conectadas
+          </button>
+          <button
+            onClick={() => setActiveTab('downloads')}
+            className={`py-2.5 font-semibold border-b-2 transition cursor-pointer whitespace-nowrap tap-highlight flex items-center gap-1.5 ${
+              activeTab === 'downloads'
+                ? 'border-[#E50914] text-white'
+                : 'border-transparent text-zinc-400 hover:text-white'
+            }`}
+          >
+            <Download className="w-3.5 h-3.5" />
+            Ingestão OneDrive (Torrents)
           </button>
           <button
             onClick={() => setActiveTab('cloudflare')}
@@ -395,6 +483,214 @@ export const CloudManagerModal: React.FC<CloudManagerModalProps> = ({
                   );
                 })}
               </div>
+            </div>
+          </div>
+        ) : activeTab === 'downloads' ? (
+          <div className="p-4 sm:p-6 space-y-6 safe-left safe-right safe-bottom flex-1 overflow-y-auto mobile-modal-content">
+            {/* Header info */}
+            <div className="bg-gradient-to-r from-red-950/40 via-zinc-900 to-zinc-900 border border-red-900/30 rounded-xl p-4 sm:p-5 space-y-2">
+              <div className="flex items-center gap-2.5 text-white font-bold text-sm sm:text-base">
+                <ArrowDownCircle className="w-5 h-5 text-[#E50914]" />
+                <span>Ingestão Automática de Torrents para o OneDrive (Custo Zero)</span>
+              </div>
+              <p className="text-xs text-zinc-300 leading-relaxed">
+                Cole o Magnet Link de qualquer filme ou série. O runner da nuvem (GitHub Actions 1 Gbps)
+                baixa o arquivo de vídeo via P2P e o <code>rclone</code> transfere diretamente para a pasta do
+                seu OneDrive. Assim que terminar, o scanner do MinattoFlix indexa o título automaticamente!
+              </p>
+            </div>
+
+            {/* Form */}
+            <form onSubmit={handleRequestDownload} className="bg-zinc-900/60 border border-zinc-800 rounded-lg p-5 space-y-4">
+              <div className="flex items-center gap-2 text-sm font-bold text-white">
+                <Download className="w-4 h-4 text-[#E50914]" />
+                <span>Adicionar Novo Torrent para Download</span>
+              </div>
+
+              {downloadMessage && (
+                <div
+                  className={`p-3 rounded-lg text-xs flex items-center gap-2 ${
+                    downloadMessage.includes('sucesso') || downloadMessage.includes('agendado')
+                      ? 'bg-emerald-950/50 border border-emerald-800/60 text-emerald-300'
+                      : 'bg-red-950/50 border border-red-800/60 text-red-300'
+                  }`}
+                >
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{downloadMessage}</span>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
+                <div className="sm:col-span-3 space-y-1">
+                  <label className="text-[11px] font-semibold text-zinc-400">Título / Nome da Pasta</label>
+                  <input
+                    type="text"
+                    value={downloadTitle}
+                    onChange={(e) => setDownloadTitle(e.target.value)}
+                    placeholder="Ex: Interestelar (2014) Dual Áudio 1080p"
+                    required
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2.5 text-white outline-none focus:border-[#E50914]"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[11px] font-semibold text-zinc-400">Categoria</label>
+                  <select
+                    value={downloadCategory}
+                    onChange={(e) => setDownloadCategory(e.target.value as 'Filmes' | 'Séries')}
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2.5 text-white outline-none focus:border-[#E50914]"
+                  >
+                    <option value="Filmes">Filmes</option>
+                    <option value="Séries">Séries</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-1 text-xs">
+                <label className="text-[11px] font-semibold text-zinc-400">Magnet Link</label>
+                <textarea
+                  value={downloadMagnet}
+                  onChange={(e) => setDownloadMagnet(e.target.value)}
+                  placeholder="magnet:?xt=urn:btih:..."
+                  rows={2}
+                  required
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-white font-mono text-[11px] outline-none focus:border-[#E50914]"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={requestingDownload}
+                className="w-full sm:w-auto px-5 py-2.5 bg-[#E50914] hover:bg-red-700 text-white rounded font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition disabled:opacity-50"
+              >
+                {requestingDownload ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Agendando...</span>
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-4 h-4" />
+                    <span>Iniciar Download & Ingestão no OneDrive</span>
+                  </>
+                )}
+              </button>
+            </form>
+
+            {/* Jobs List */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-300">
+                  Fila e Histórico de Downloads ({downloadJobs.length})
+                </h4>
+                <button
+                  type="button"
+                  onClick={loadDownloads}
+                  disabled={loadingJobs}
+                  className="px-2.5 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded flex items-center gap-1.5 cursor-pointer"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${loadingJobs ? 'animate-spin' : ''}`} />
+                  <span>Atualizar</span>
+                </button>
+              </div>
+
+              {downloadJobs.length === 0 ? (
+                <div className="p-8 text-center text-zinc-500 bg-zinc-900/40 border border-zinc-800 rounded-lg text-xs">
+                  Nenhum download agendado no momento. Cole um magnet link acima para iniciar!
+                </div>
+              ) : (
+                <div className="border border-zinc-800 rounded-lg divide-y divide-zinc-800 text-xs">
+                  {downloadJobs.map((job) => {
+                    const statusColor =
+                      job.status === 'completed'
+                        ? 'text-emerald-400 bg-emerald-950/60 border-emerald-800/60'
+                        : job.status === 'failed'
+                        ? 'text-red-400 bg-red-950/60 border-red-800/60'
+                        : job.status === 'downloading' || job.status === 'uploading_to_onedrive'
+                        ? 'text-sky-400 bg-sky-950/60 border-sky-800/60'
+                        : 'text-amber-400 bg-amber-950/60 border-amber-800/60';
+
+                    const statusLabel =
+                      job.status === 'completed'
+                        ? '✓ Concluído & Indexado'
+                        : job.status === 'failed'
+                        ? '✕ Falha'
+                        : job.status === 'downloading'
+                        ? '📥 Baixando (1 Gbps)'
+                        : job.status === 'uploading_to_onedrive'
+                        ? '☁️ Enviando ao OneDrive'
+                        : job.status === 'dispatching'
+                        ? '⚡ Disparando Action'
+                        : '🕒 Na Fila';
+
+                    return (
+                      <div key={job.id} className="p-3.5 bg-zinc-950/50 space-y-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="font-semibold text-white truncate">{job.title}</div>
+                            <div className="text-[11px] text-zinc-500 font-mono">
+                              {job.media_type === 'series' ? 'Série' : 'Filme'} •{' '}
+                              {new Date(job.created_at).toLocaleString('pt-BR')}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className={`px-2.5 py-1 rounded text-[11px] font-semibold border ${statusColor}`}>
+                              {statusLabel}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteJob(job.id)}
+                              className="p-1 text-zinc-500 hover:text-red-400 transition cursor-pointer"
+                              title="Remover job do histórico"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Progress Bar */}
+                        <div className="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
+                          <div
+                            className={`h-full transition-all duration-500 ${
+                              job.status === 'completed'
+                                ? 'bg-emerald-500'
+                                : job.status === 'failed'
+                                ? 'bg-red-500'
+                                : 'bg-[#E50914]'
+                            }`}
+                            style={{ width: `${job.progress_percent || (job.status === 'completed' ? 100 : 5)}%` }}
+                          />
+                        </div>
+
+                        {job.download_speed && (
+                          <div className="text-[11px] text-zinc-400 flex items-center justify-between">
+                            <span>{job.download_speed}</span>
+                            <span>{job.progress_percent}%</span>
+                          </div>
+                        )}
+
+                        {job.error_message && (
+                          <div className="text-[11px] text-red-400 bg-red-950/30 p-2 rounded border border-red-900/40">
+                            {job.error_message}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Instruction Accordion / Guide */}
+            <div className="bg-zinc-900/70 border border-zinc-800 rounded-lg p-4 space-y-2 text-xs text-zinc-300">
+              <div className="font-bold text-white flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                <span>Configuração Rápida do OneDrive no GitHub (Custo Zero)</span>
+              </div>
+              <p className="text-zinc-400 text-[11px]">
+                Para que o runner envie o arquivo diretamente para o seu OneDrive, adicione o secret{' '}
+                <code className="text-white bg-zinc-800 px-1.5 py-0.5 rounded">RCLONE_ONEDRIVE_CONF</code> no seu repositório GitHub{' '}
+                <code className="text-white bg-zinc-800 px-1.5 py-0.5 rounded">rafaelminatto1/minattoflix-v2</code> com a configuração do seu token OneDrive gerado pelo Rclone.
+              </p>
             </div>
           </div>
         ) : activeTab === 'cloudflare' ? (

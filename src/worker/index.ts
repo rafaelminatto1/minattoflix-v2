@@ -14,6 +14,7 @@ import { profilesRoutes } from './routes/profiles';
 import { storageRoutes } from './routes/storage';
 import { watchPartyRoutes } from './routes/watch-party';
 import { mediaRoutes } from './routes/media';
+import { downloadsRoutes } from './routes/downloads';
 
 // Structured logging utility
 function createLogger(c: Context) {
@@ -158,6 +159,7 @@ app.route('/', profilesRoutes);
 app.route('/', storageRoutes);
 app.route('/', watchPartyRoutes);
 app.route('/', mediaRoutes);
+app.route('/', downloadsRoutes);
 
 // Cron trigger handler
 export default {

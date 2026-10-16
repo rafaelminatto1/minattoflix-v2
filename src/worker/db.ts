@@ -46,6 +46,8 @@ export interface Env {
   HYPERDRIVE?: { connectionString: string };
   AI?: AiBinding;
   WATCH_PARTY?: DurableObjectNamespaceBinding;
+  GITHUB_TOKEN?: string;
+  MINATTO_WEBHOOK_SECRET?: string;
 }
 
 export function getDb(env?: Partial<Env>) {
