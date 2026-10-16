@@ -166,9 +166,8 @@ function MasterClockProvider({
  * which can have audio sync issues on Firefox iOS / some Safari versions
  */
 function needsHlsPlayback(): boolean {
-  if (typeof window === 'undefined') return false;
-  // Force HLS on iOS WebKit for MKV files to avoid WebCodecs audio sync issues
-  return isIosWebKit();
+  // Do not force HLS for cloud files on iOS WebKit; mux.js cannot transmux MKV on Cloudflare Workers
+  return false;
 }
 
 /**
@@ -243,8 +242,14 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
     (selectedFile?.filename || '').toLowerCase().includes('2160p') ||
     (selectedFile?.size_bytes ? Number(selectedFile.size_bytes) > 8 * 1024 * 1024 * 1024 : false)
   );
-  // Default to HLS on iOS for MKV files (better audio sync), WebCodecs as fallback
-  const [useWebCodecsCanvas, setUseWebCodecsCanvas] = useState<boolean>(false);
+  // On iOS WebKit, native <video> cannot play MKV containers and worker cannot transmux MKV to HLS.
+  // Directly initialize WebCodecs canvas player for MKV files on iOS to ensure immediate playback.
+  const [useWebCodecsCanvas, setUseWebCodecsCanvas] = useState<boolean>(() => {
+    return isIosWebKit() && Boolean(
+      (initialSelectedFile?.container || '').toLowerCase() === 'mkv' ||
+      (initialSelectedFile?.filename || '').toLowerCase().endsWith('.mkv')
+    );
+  });
 
   const [playing, setPlaying] = useState(() => !isIosWebKit());
   const [currentTime, setCurrentTime] = useState(item.progress?.is_completed ? 0 : item.progress?.position_seconds || 0);
@@ -674,9 +679,9 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
       }
     }
 
-    // On iOS, ALWAYS use native video fullscreen (webkitEnterFullscreen) for true fullscreen
+    // On iOS, use native video fullscreen (webkitEnterFullscreen) only for native <video>, NOT when rendering on canvas
     const nativeVideo = videoRef.current as (HTMLVideoElement & { webkitEnterFullscreen?: () => void }) | null;
-    if (isIosWebKit() && nativeVideo?.webkitEnterFullscreen) {
+    if (isIosWebKit() && !useWebCodecsCanvas && nativeVideo?.webkitEnterFullscreen) {
       try {
         nativeVideo.webkitEnterFullscreen();
         setIsFullscreen(true);
@@ -737,12 +742,6 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
     document.addEventListener('fullscreenchange', syncFullscreenState);
     document.addEventListener('webkitfullscreenchange', syncFullscreenState);
 
-    // Auto-fullscreen em computadores e celulares sempre que iniciar o filme
-    const doc = document as Document & { webkitFullscreenElement?: Element | null };
-    if (!isPlayerFullscreen(doc, videoRef.current as FullscreenVideo | null)) {
-      void enterFullscreen();
-    }
-
     return () => {
       video?.removeEventListener('webkitbeginfullscreen', onNativeEnter);
       video?.removeEventListener('webkitendfullscreen', onNativeExit);
@@ -753,8 +752,9 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
 
   const hlsMasterUrl = selectedFile ? getHlsMasterUrl(selectedFile.id) : '';
 
-  // Determine if we should use HLS (iOS Safari)
-  const shouldUseHls = !useWebCodecsCanvas && !hlsError && (useHls || (needsHlsPlayback() && hlsMasterUrl && effectiveStreamUrl));
+  // Determine if we should use HLS (only if explicitly requested or stream is an HLS playlist)
+  const isDirectHlsStream = Boolean(effectiveStreamUrl && /\.m3u8(\?|$)/i.test(effectiveStreamUrl));
+  const shouldUseHls = !useWebCodecsCanvas && !hlsError && (useHls || isDirectHlsStream);
 
   // Filter embedded tracks to the currently active cloud file (GDrive or OneDrive) + any external tracks
   const visibleAudioTracks = React.useMemo(() => {
@@ -877,8 +877,8 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
         setIsBuffering(false);
         setStreamError(null);
         setShowControls(true);
-        // Auto-fullscreen em computadores e celulares quando o canvas estiver pronto
-        if (!isFullscreen) {
+        // On desktop/Android, auto-fullscreen when ready; on iOS, wait for user play tap to preserve gesture
+        if (!isFullscreen && !isIosWebKit()) {
           void enterFullscreen();
         }
       },
@@ -2033,13 +2033,15 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
   const handleRetryStream = () => {
     setRetryCount(0);
     setHlsError(null);
+    setStreamError(null);
     if (useWebCodecsCanvas) {
       // Retry WebCodecs
       if (canvasPlayerRef.current) {
         canvasPlayerRef.current.destroy();
+        canvasPlayerRef.current = null;
       }
       setUseWebCodecsCanvas(false);
-      // Will re-trigger WebCodecs via effect
+      setTimeout(() => setUseWebCodecsCanvas(true), 50);
     } else if (shouldUseHls) {
       // Retry HLS
       setUseHls(false);
@@ -2051,7 +2053,6 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
         videoRef.current.play().catch(() => {});
       }
     }
-    setStreamError(null);
   };
 
   const handleCopyDirectStreamUrl = () => {
