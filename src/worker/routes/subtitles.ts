@@ -15,17 +15,27 @@ export const subtitlesRoutes = new Hono<{ Bindings: Env }>();
 /**
  * GET /api/subtitles/:subIdFile - Serve WebVTT from R2, Neon, or live extraction
  */
+function isValidCompleteVtt(content?: string | null): boolean {
+  if (!content) return false;
+  const str = String(content).trim();
+  if (str.length < 500) return false;
+  if (!str.includes('-->')) return false;
+  if (str.includes('[MinattoFlix Cloud Stream')) return false;
+  const cueCount = (str.match(/-->/g) || []).length;
+  return cueCount >= 5;
+}
+
 subtitlesRoutes.get('/api/subtitles/:subIdFile', async (c) => {
   const rawParam = c.req.param('subIdFile');
   const subId = rawParam.replace(/\.vtt$/i, '');
 
-  // 1. Check Cloudflare R2 Bucket first
+  // 1. Check Cloudflare R2 Bucket first (only accept complete subtitles)
   if (c.env.MEDIA_BUCKET) {
     try {
       const r2Obj = await c.env.MEDIA_BUCKET.get(`subtitles/${subId}.vtt`);
       if (r2Obj) {
         const text = await r2Obj.text();
-        if (text && text.includes('WEBVTT')) {
+        if (text && text.includes('WEBVTT') && isValidCompleteVtt(text)) {
           return new Response(text, {
             headers: {
               'Content-Type': 'text/vtt; charset=utf-8',
@@ -59,8 +69,8 @@ subtitlesRoutes.get('/api/subtitles/:subIdFile', async (c) => {
 
   const sub = rows[0];
 
-  // 2. If stored in Neon content_vtt column
-  if (sub.content_vtt && String(sub.content_vtt).trim().length > 0) {
+  // 2. If stored in Neon content_vtt column and is a complete track
+  if (isValidCompleteVtt(sub.content_vtt)) {
     const vtt = convertToWebVtt(String(sub.content_vtt), String(sub.format || 'vtt'));
     if (c.env.MEDIA_BUCKET) {
       c.env.MEDIA_BUCKET.put(`subtitles/${subId}.vtt`, vtt, {

@@ -155,6 +155,11 @@ footer.safe-bottom { --safe-bottom-space: 6rem; }
 .player-top-bar { --safe-top-space: 1rem; }
 .player-bottom-bar { --safe-bottom-space: 1rem; }
 .player-shell { height: 100%; height: 100dvh; }
+/* YouTube-like cursor hiding when player controls are hidden (fullscreen & desktop) */
+.player-shell.hide-cursor,
+.player-shell.hide-cursor * {
+  cursor: none !important;
+}
 .detail-close { top: max(.75rem, env(safe-area-inset-top, 0px)); right: max(.75rem, env(safe-area-inset-right, 0px)); }
 .catalog-main { padding-top: calc(var(--app-header-height, 104px) + 1rem); }
 .media-row .catalog-carousel { scroll-padding-inline: 0; }

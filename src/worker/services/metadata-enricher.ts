@@ -14,7 +14,7 @@ export interface EnrichedMetadata {
 
 export function cleanTitleForEnrichment(raw: string): string {
   let s = raw;
-  s = s.replace(/^www[\.\s_-]\w+[\.\s_-](?:org|com|net|to|me|info)[:\s_-]*/i, '');
+  s = s.replace(/^(?:www[\.\s_-].*?(?:org|com|net|to|me|info)|https?:\/\/[^\s]+)[:\s_-]*/i, '');
   s = s.replace(/:\s*EPISÓDIO COMPLETO.*$/i, '');
   s = s.replace(/EPISÓDIO COMPLETO.*$/i, '');
   s = s.replace(/\b(\d+ª?\s+temporada|temporada\s+\d+|season\s+\d+)\b.*$/i, '');

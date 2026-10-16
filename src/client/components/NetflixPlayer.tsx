@@ -87,6 +87,8 @@ interface HlsStatic {
 interface HlsConfig {
   enableWorker?: boolean;
   lowLatencyMode?: boolean;
+  backBufferLength?: number;
+  capLevelToPlayerSize?: boolean;
   maxBufferLength?: number;
   maxMaxBufferLength?: number;
   maxBufferSize?: number;
@@ -272,6 +274,17 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
   const [subtitleEdge, setSubtitleEdge] = useState<'none' | 'outline' | 'shadow'>(() => (localStorage.getItem('minattoflix_subtitleEdge') as 'none' | 'outline' | 'shadow') || 'outline');
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
   const [showQualityDashboard, setShowQualityDashboard] = useState(false);
+  const [osdMessage, setOsdMessage] = useState<{ text: string; icon?: 'forward' | 'backward' | 'volume' | 'caption' | 'speed' | 'play' | 'pause'; id: number } | null>(null);
+  const osdTimerRef = useRef<number | null>(null);
+  const clickTimeoutRef = useRef<number | null>(null);
+
+  const showOsdFeedback = useCallback((text: string, icon?: 'forward' | 'backward' | 'volume' | 'caption' | 'speed' | 'play' | 'pause') => {
+    if (osdTimerRef.current) window.clearTimeout(osdTimerRef.current);
+    setOsdMessage({ text, icon, id: Date.now() });
+    osdTimerRef.current = window.setTimeout(() => {
+      setOsdMessage(null);
+    }, 1200);
+  }, []);
 
   // Persist preferences to localStorage
   useEffect(() => { localStorage.setItem('minattoflix_volume', String(volume)); }, [volume]);
@@ -509,22 +522,63 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
     : item.subtitleTracks;
   const candidateSubTracks = initialFileSubTracks.length > 0 ? initialFileSubTracks : item.subtitleTracks;
 
+  // Resolve initial playing audio track
+  const initialResolvedAudio =
+    (initialAudioId && candidateAudioTracks.find((a) => a.id === initialAudioId)) ||
+    (item.progress?.selected_audio_id && candidateAudioTracks.find((a) => a.id === item.progress?.selected_audio_id)) ||
+    candidateAudioTracks.find((a) => a.language_code === activeProfile.preferred_audio_lang) ||
+    candidateAudioTracks.find((a) => ['pt-br', 'pt', 'por', 'pob'].includes((a.language_code || '').toLowerCase())) ||
+    candidateAudioTracks[0];
+
+  const isAudioPortuguese = Boolean(
+    initialResolvedAudio &&
+    ['pt-br', 'pt', 'por', 'pob'].includes((initialResolvedAudio.language_code || '').toLowerCase())
+  );
+
+  const isMoviePortuguese = Boolean(
+    ['pt-br', 'pt', 'por', 'pob'].includes(((item as unknown as { original_language?: string }).original_language || '').toLowerCase()) || isAudioPortuguese
+  );
+
   // Audio & Subtitle Menu State
   const [showAudioSubMenu, setShowAudioSubMenu] = useState(false);
-  const [activeAudioId, setActiveAudioId] = useState<string>(
-    (initialAudioId && candidateAudioTracks.find((a) => a.id === initialAudioId)?.id) ||
-      (item.progress?.selected_audio_id && candidateAudioTracks.find((a) => a.id === item.progress?.selected_audio_id)?.id) ||
-      candidateAudioTracks.find((a) => a.language_code === activeProfile.preferred_audio_lang)?.id ||
-      candidateAudioTracks[0]?.id ||
-      ''
-  );
-  const [activeSubtitleId, setActiveSubtitleId] = useState<string>(
-    (initialSubtitleId && candidateSubTracks.find((s) => s.id === initialSubtitleId)?.id) ||
-      (item.progress?.selected_subtitle_id && candidateSubTracks.find((s) => s.id === item.progress?.selected_subtitle_id)?.id) ||
-      (activeProfile.preferred_subtitle_lang !== 'off'
-        ? candidateSubTracks.find((s) => s.language_code === activeProfile.preferred_subtitle_lang)?.id || 'off'
-        : candidateSubTracks.find((s) => s.is_forced)?.id || 'off')
-  );
+  const [activeAudioId, setActiveAudioId] = useState<string>(initialResolvedAudio?.id || '');
+
+  const [activeSubtitleId, setActiveSubtitleId] = useState<string>(() => {
+    // 1. Explicit initial selection from caller
+    if (initialSubtitleId) {
+      if (initialSubtitleId === 'off') return 'off';
+      const match = candidateSubTracks.find((s) => s.id === initialSubtitleId);
+      if (match) return match.id;
+    }
+
+    // 2. Saved user progress for this specific title
+    const savedSubId = item.progress?.selected_subtitle_id;
+    if (savedSubId) {
+      if (savedSubId === 'off') return 'off';
+      const match = candidateSubTracks.find((s) => s.id === savedSubId);
+      if (match) return match.id;
+    }
+
+    // 3. User requirement: "mas em filme postugues deixes por padrão desativada quando reproduzido"
+    // In Portuguese movies or when playing in Portuguese, subtitles are OFF by default!
+    if (isMoviePortuguese || isAudioPortuguese) {
+      const forcedSub = candidateSubTracks.find((s) => s.is_forced);
+      return forcedSub ? forcedSub.id : 'off';
+    }
+
+    // 4. Foreign movie (e.g. Odyssey with English audio):
+    // Brazilian users need PT-BR subtitles enabled by default!
+    const ptSub = candidateSubTracks.find((s) =>
+      ['pt-br', 'pt', 'por', 'pob'].includes((s.language_code || '').toLowerCase())
+    );
+    if (ptSub) return ptSub.id;
+
+    // 5. Default track if configured, else off
+    const defaultSub = candidateSubTracks.find((s) => s.is_default);
+    if (defaultSub) return defaultSub.id;
+
+    return 'off';
+  });
 
   const [audioStatusNote, setAudioStatusNote] = useState<string>('Preparando áudio…');
   const [mediabunnyTracks, setMediabunnyTracks] = useState<MediabunnyTrackSummary[]>([]);
@@ -972,6 +1026,8 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
           hls = new HlsClass({
             enableWorker: true,
             lowLatencyMode: true,
+            backBufferLength: 60,
+            capLevelToPlayerSize: true,
             maxBufferLength: is4KMedia ? 60 : 30,
             maxMaxBufferLength: is4KMedia ? 120 : 60,
             maxBufferSize: is4KMedia ? 120 * 1000 * 1000 : 60 * 1000 * 1000,
@@ -1288,20 +1344,26 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
 
   const resetControlsTimer = useCallback(() => {
     setShowControls(true);
+    if (containerRef.current) {
+      containerRef.current.classList.remove('hide-cursor');
+    }
     if (controlsTimerRef.current) {
       window.clearTimeout(controlsTimerRef.current);
     }
-    if (!showAudioSubMenu && !showWatchParty) {
+    if (!showAudioSubMenu && !showWatchParty && !showShortcutsHelp && !showQualityDashboard && !showQualityMenu) {
       controlsTimerRef.current = window.setTimeout(() => {
         const isPausedNow = useWebCodecsCanvas
           ? canvasPlayerRef.current?.isPaused() ?? !playing
           : videoRef.current?.paused ?? !playing;
         if (!isPausedNow && (isMobile || !isHoveringControlsRef.current)) {
           setShowControls(false);
+          if (containerRef.current) {
+            containerRef.current.classList.add('hide-cursor');
+          }
         }
       }, 3200);
     }
-  }, [playing, showAudioSubMenu, showWatchParty, useWebCodecsCanvas, isMobile]);
+  }, [playing, showAudioSubMenu, showWatchParty, showShortcutsHelp, showQualityDashboard, showQualityMenu, useWebCodecsCanvas, isMobile]);
 
   useEffect(() => {
     if (!fullscreenError || !expandedPlayer) return;
@@ -1316,6 +1378,9 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
   useEffect(() => {
     if (!playing) {
       setShowControls(true);
+      if (containerRef.current) {
+        containerRef.current.classList.remove('hide-cursor');
+      }
       if (controlsTimerRef.current) {
         window.clearTimeout(controlsTimerRef.current);
       }
@@ -1324,26 +1389,83 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
     }
   }, [playing, resetControlsTimer]);
 
+  // Mouse and pointer movements immediately reveal controls and cursor (YouTube behavior)
+  useEffect(() => {
+    const onActivity = () => {
+      resetControlsTimer();
+    };
+    window.addEventListener('mousemove', onActivity, { passive: true });
+    window.addEventListener('pointermove', onActivity, { passive: true });
+    return () => {
+      window.removeEventListener('mousemove', onActivity);
+      window.removeEventListener('pointermove', onActivity);
+    };
+  }, [resetControlsTimer]);
+
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement || (e.target instanceof HTMLElement && e.target.isContentEditable)) return;
       if (e.key === ' ' && e.target instanceof HTMLButtonElement) return;
-      if (e.key === ' ' || e.key === 'k') {
+
+      const key = e.key.toLowerCase();
+      if (e.key === ' ' || key === 'k') {
         e.preventDefault();
         togglePlay();
-      } else if (e.key === 'ArrowRight') {
+        showOsdFeedback(!playing ? 'Reproduzindo' : 'Pausado', !playing ? 'play' : 'pause');
+      } else if (e.key === 'ArrowRight' || key === 'l') {
         e.preventDefault();
         skipSeconds(10);
-      } else if (e.key === 'ArrowLeft') {
+      } else if (e.key === 'ArrowLeft' || key === 'j') {
         e.preventDefault();
         skipSeconds(-10);
-      } else if (e.key === 'f' || e.key === 'F') {
+      } else if (e.key === 'ArrowUp') {
         e.preventDefault();
-        toggleFullscreen();
-      } else if (e.key === 'm' || e.key === 'M') {
+        resetControlsTimer();
+        const nextVol = Math.min(1, Math.round((volume + 0.05) * 100) / 100);
+        handleVolumeSlider(nextVol);
+        showOsdFeedback(`Volume: ${Math.round(nextVol * 100)}%`, 'volume');
+      } else if (e.key === 'ArrowDown') {
         e.preventDefault();
+        resetControlsTimer();
+        const nextVol = Math.max(0, Math.round((volume - 0.05) * 100) / 100);
+        handleVolumeSlider(nextVol);
+        showOsdFeedback(`Volume: ${Math.round(nextVol * 100)}%`, 'volume');
+      } else if (key === 'm') {
+        e.preventDefault();
+        resetControlsTimer();
         toggleMute();
-      } else if (e.key === '?' || e.key === 'h' || e.key === 'H') {
+      } else if (key === 'f') {
+        e.preventDefault();
+        resetControlsTimer();
+        void toggleFullscreen();
+      } else if (key === 'c') {
+        e.preventDefault();
+        resetControlsTimer();
+        toggleCaptions();
+      } else if (key === 'i' || key === 'p') {
+        e.preventDefault();
+        resetControlsTimer();
+        void togglePip();
+      } else if (key >= '0' && key <= '9') {
+        e.preventDefault();
+        resetControlsTimer();
+        const fraction = parseInt(key, 10) / 10;
+        const target = (duration || 0) * fraction;
+        handleSeek(target);
+        showOsdFeedback(`${fraction * 100}%`, 'forward');
+      } else if (e.key === '>' || (e.shiftKey && e.key === '.')) {
+        e.preventDefault();
+        resetControlsTimer();
+        handleCyclePlaybackRate(1);
+      } else if (e.key === '<' || (e.shiftKey && e.key === ',')) {
+        e.preventDefault();
+        resetControlsTimer();
+        handleCyclePlaybackRate(-1);
+      } else if (key === 's') {
+        e.preventDefault();
+        resetControlsTimer();
+        setShowAudioSubMenu((s) => !s);
+      } else if (key === '?' || key === 'h') {
         e.preventDefault();
         setShowShortcutsHelp((s) => !s);
       } else if (e.key === 'Escape') {
@@ -1356,6 +1478,114 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   });
+
+  // Media Session API: lock screen, hardware keys, Bluetooth headphones, notifications
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator) || typeof window === 'undefined') return;
+
+    try {
+      const artwork = [];
+      if (item.poster_url) {
+        artwork.push({ src: item.poster_url, sizes: '512x512', type: 'image/jpeg' });
+      }
+      if (item.backdrop_url) {
+        artwork.push({ src: item.backdrop_url, sizes: '1280x720', type: 'image/jpeg' });
+      }
+
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: item.title,
+        artist: item.type === 'series' ? 'Série MinattoFlix' : 'MinattoFlix',
+        album: 'MinattoFlix',
+        artwork,
+      });
+
+      navigator.mediaSession.setActionHandler('play', () => {
+        if (!playing) togglePlay();
+      });
+      navigator.mediaSession.setActionHandler('pause', () => {
+        if (playing) togglePlay();
+      });
+      navigator.mediaSession.setActionHandler('seekbackward', (details) => {
+        skipSeconds(-(details?.seekOffset || 10));
+      });
+      navigator.mediaSession.setActionHandler('seekforward', (details) => {
+        skipSeconds(details?.seekOffset || 10);
+      });
+      navigator.mediaSession.setActionHandler('seekto', (details) => {
+        if (details?.seekTime !== undefined && details.seekTime !== null) {
+          handleSeek(details.seekTime);
+        }
+      });
+      navigator.mediaSession.setActionHandler('stop', () => {
+        handleExitPlayer();
+      });
+    } catch (err) {
+      console.warn('MediaSession setup failed:', err);
+    }
+
+    return () => {
+      try {
+        if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+          navigator.mediaSession.setActionHandler('play', null);
+          navigator.mediaSession.setActionHandler('pause', null);
+          navigator.mediaSession.setActionHandler('seekbackward', null);
+          navigator.mediaSession.setActionHandler('seekforward', null);
+          navigator.mediaSession.setActionHandler('seekto', null);
+          navigator.mediaSession.setActionHandler('stop', null);
+        }
+      } catch {
+        // Ignore
+      }
+    };
+  }, [item.title, item.poster_url, item.backdrop_url, item.type, playing]);
+
+  // Synchronize playback state and position with Media Session API
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+    try {
+      navigator.mediaSession.playbackState = playing ? 'playing' : 'paused';
+      if (duration && Number.isFinite(duration) && duration > 0) {
+        navigator.mediaSession.setPositionState({
+          duration,
+          playbackRate: playbackRate || 1,
+          position: Math.min(Math.max(0, currentTime), duration),
+        });
+      }
+    } catch {
+      // Ignore browsers that don't support setPositionState
+    }
+  }, [playing, currentTime, duration, playbackRate]);
+
+  // Immediate progress persistence when tabbing away, locking screen, or closing tab
+  useEffect(() => {
+    const saveCurrentProgress = () => {
+      const curPos = useWebCodecsCanvas
+        ? canvasPlayerRef.current?.getCurrentTime() || 0
+        : videoRef.current?.currentTime || 0;
+      if (curPos > 3) {
+        onSaveProgress({
+          mediaItemId: item.id,
+          positionSeconds: curPos,
+          durationSeconds: videoRef.current?.duration || duration,
+          selectedAudioId: activeAudioId,
+          selectedSubtitleId: activeSubtitleId,
+        }).catch(() => {});
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        saveCurrentProgress();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('beforeunload', saveCurrentProgress);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('beforeunload', saveCurrentProgress);
+    };
+  }, [item.id, activeAudioId, activeSubtitleId, duration, useWebCodecsCanvas, onSaveProgress]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -1421,22 +1651,38 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
     }
   };
 
+  const handleSeek = (next: number) => {
+    const target = Math.max(0, Math.min(duration || 7200, next));
+    audioControllerRef.current?.resumeAudioContext();
+    resetControlsTimer();
+    setCurrentTime(target);
+    if (useWebCodecsCanvas && canvasPlayerRef.current) {
+      canvasPlayerRef.current.seek(target);
+      audioControllerRef.current?.notifyClockSeek(target);
+    } else if (videoRef.current) {
+      const v = videoRef.current as HTMLVideoElement & { fastSeek?: (time: number) => void };
+      if (typeof v.fastSeek === 'function') {
+        try {
+          v.fastSeek(target);
+        } catch {
+          v.currentTime = target;
+        }
+      } else {
+        v.currentTime = target;
+      }
+    }
+    broadcastPartySync(playing, target);
+  };
+
   const skipSeconds = (delta: number) => {
     audioControllerRef.current?.resumeAudioContext();
     resetControlsTimer();
-    if (useWebCodecsCanvas && canvasPlayerRef.current) {
-      const next = Math.max(0, Math.min(duration || 7200, canvasPlayerRef.current.getCurrentTime() + delta));
-      canvasPlayerRef.current.seek(next);
-      audioControllerRef.current?.notifyClockSeek(next);
-      setCurrentTime(next);
-      broadcastPartySync(!canvasPlayerRef.current.isPaused(), next);
-      return;
-    }
-    if (!videoRef.current) return;
-    const next = Math.max(0, Math.min(duration || 7200, videoRef.current.currentTime + delta));
-    videoRef.current.currentTime = next;
-    setCurrentTime(next);
-    broadcastPartySync(!videoRef.current.paused, next);
+    const cur = useWebCodecsCanvas && canvasPlayerRef.current
+      ? canvasPlayerRef.current.getCurrentTime()
+      : (videoRef.current?.currentTime || currentTime);
+    const next = Math.max(0, Math.min(duration || 7200, cur + delta));
+    handleSeek(next);
+    showOsdFeedback(delta > 0 ? `+${delta}s` : `${delta}s`, delta > 0 ? 'forward' : 'backward');
   };
 
   const restartPlayback = () => {
@@ -1462,6 +1708,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
       }).catch(() => {});
     }
     setCurrentTime(0);
+    showOsdFeedback('Reiniciando vídeo', 'backward');
     onSaveProgress({
       mediaItemId: item.id,
       positionSeconds: 0,
@@ -1476,13 +1723,63 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
     const nextMuted = !muted;
     audioControllerRef.current?.setOutputVolume(volume, nextMuted);
     setMuted(nextMuted);
+    localStorage.setItem('minattoflix_muted', String(nextMuted));
+    showOsdFeedback(nextMuted ? 'Mudo ativado' : `Volume: ${Math.round(volume * 100)}%`, 'volume');
   };
 
   const handleVolumeSlider = (val: number) => {
     if (!videoRef.current) return;
-    audioControllerRef.current?.setOutputVolume(val, val === 0);
-    setVolume(val);
-    setMuted(val === 0);
+    const clamped = Math.max(0, Math.min(1, val));
+    audioControllerRef.current?.setOutputVolume(clamped, clamped === 0);
+    setVolume(clamped);
+    setMuted(clamped === 0);
+    localStorage.setItem('minattoflix_volume', String(clamped));
+    localStorage.setItem('minattoflix_muted', String(clamped === 0));
+  };
+
+  const toggleCaptions = () => {
+    if (activeSubtitleId !== 'off') {
+      setActiveSubtitleId('off');
+      localStorage.setItem('minattoflix_subtitleId', 'off');
+      showOsdFeedback('Legendas desativadas', 'caption');
+    } else {
+      const firstSub = item.subtitleTracks.find((s) => s.id !== 'off') || item.subtitleTracks[0];
+      const targetId = firstSub ? firstSub.id : 'pt';
+      setActiveSubtitleId(targetId);
+      localStorage.setItem('minattoflix_subtitleId', targetId);
+      showOsdFeedback(`Legendas: ${firstSub?.label || 'Ativadas'}`, 'caption');
+    }
+  };
+
+  const handleVideoClick = () => {
+    if (showAudioSubMenu) { setShowAudioSubMenu(false); return; }
+    if (showWatchParty) { setShowWatchParty(false); return; }
+    if (isMobile && playing) { resetControlsTimer(); return; }
+
+    if (!isMobile) {
+      if (clickTimeoutRef.current) {
+        window.clearTimeout(clickTimeoutRef.current);
+        clickTimeoutRef.current = null;
+        void toggleFullscreen();
+        return;
+      }
+      clickTimeoutRef.current = window.setTimeout(() => {
+        clickTimeoutRef.current = null;
+        togglePlay();
+      }, 220);
+    } else {
+      togglePlay();
+    }
+  };
+
+  const handleVideoDoubleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (clickTimeoutRef.current) {
+      window.clearTimeout(clickTimeoutRef.current);
+      clickTimeoutRef.current = null;
+    }
+    void toggleFullscreen();
   };
 
   // Touch Gestures: Double-tap seek, Swipe volume/brightness
@@ -1570,8 +1867,10 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
     try {
       if (document.pictureInPictureElement) {
         await document.exitPictureInPicture();
+        showOsdFeedback('Picture-in-Picture desativado');
       } else {
         await videoRef.current.requestPictureInPicture();
+        showOsdFeedback('Picture-in-Picture ativado');
       }
     } catch {
       // Ignore if PiP unsupported
@@ -1593,6 +1892,20 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
 
   const handleSelectAudioTrack = async (track: AudioTrack) => {
     setActiveAudioId(track.id);
+
+    // "mas em filme postugues deixes por padrão desativada quando reproduzido"
+    const isPt = ['pt-br', 'pt', 'por', 'pob'].includes((track.language_code || '').toLowerCase());
+    if (isPt) {
+      setActiveSubtitleId('off');
+    } else {
+      const ptSub = candidateSubTracks.find((s) =>
+        ['pt-br', 'pt', 'por', 'pob'].includes((s.language_code || '').toLowerCase())
+      );
+      if (ptSub && activeSubtitleId === 'off') {
+        setActiveSubtitleId(ptSub.id);
+      }
+    }
+
     if (!audioControllerRef.current) return;
     if (track.source_type === 'embedded' && track.id !== activeAudioId) return;
     setAudioStatusNote('Preparando áudio…');
@@ -1685,16 +1998,21 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
     );
   };
 
-  const handleCyclePlaybackRate = () => {
-    const rates = [0.75, 1, 1.25, 1.5, 2];
-    const nextIdx = (rates.indexOf(playbackRate) + 1) % rates.length;
+  const handleCyclePlaybackRate = (step: number = 1) => {
+    const rates = [0.5, 0.75, 1, 1.25, 1.5, 2];
+    const curIdx = rates.indexOf(playbackRate);
+    const nextIdx = curIdx === -1
+      ? 2
+      : Math.max(0, Math.min(rates.length - 1, (curIdx + step + rates.length) % rates.length));
     const nextRate = rates[nextIdx];
     setPlaybackRate(nextRate);
+    localStorage.setItem('minattoflix_playbackRate', String(nextRate));
     if (useWebCodecsCanvas && canvasPlayerRef.current) {
       canvasPlayerRef.current.setPlaybackRate(nextRate);
     } else if (videoRef.current) {
       videoRef.current.playbackRate = nextRate;
     }
+    showOsdFeedback(`Velocidade: ${nextRate}x`, 'speed');
   };
 
   const setHlsQuality = (quality: string) => {
@@ -1788,7 +2106,8 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
 
   const activeAudioObj = item.audioTracks.find((a) => a.id === activeAudioId) || item.audioTracks[0];
   const activeSubObj = item.subtitleTracks.find((s) => s.id === activeSubtitleId);
-  const controlsVisible = showControls || !playing || showAudioSubMenu || showWatchParty;
+  const controlsVisible = showControls || !playing || showAudioSubMenu || showWatchParty || showShortcutsHelp || showQualityDashboard || showQualityMenu;
+  const hideCursor = !controlsVisible;
 
   return (
     <MasterClockProvider clock={masterClockRef.current}>
@@ -1802,9 +2121,28 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
           audioControllerRef.current?.resumeAudioContext();
           resetControlsTimer();
         }}
-        className={`player-shell fixed inset-0 bg-black flex flex-col justify-between select-none overflow-hidden safe-top safe-bottom ${expandedPlayer ? 'player-landscape z-[100]' : 'z-50'}`}
+        className={`player-shell fixed inset-0 bg-black flex flex-col justify-between select-none overflow-hidden safe-top safe-bottom ${hideCursor ? 'hide-cursor cursor-none' : ''} ${expandedPlayer ? 'player-landscape z-[100]' : 'z-50'}`}
       >
       {fullscreenError && <div role="status" className="absolute top-20 left-4 right-4 z-[60] rounded bg-black/90 p-3 text-center text-sm text-white">{fullscreenError}</div>}
+
+      {/* On-Screen Display (OSD) feedback badge */}
+      {osdMessage && (
+        <div
+          key={osdMessage.id}
+          className="pointer-events-none absolute inset-0 flex items-center justify-center z-40 animate-fadeIn"
+        >
+          <div className="bg-black/85 backdrop-blur-md border border-zinc-700/70 text-white px-5 py-3 rounded-2xl flex items-center gap-3 shadow-[0_12px_40px_rgba(0,0,0,0.85)] text-sm sm:text-base md:text-lg font-bold tracking-wide">
+            {osdMessage.icon === 'forward' && <RotateCw className="w-5 h-5 sm:w-6 sm:h-6 text-[#E50914]" />}
+            {osdMessage.icon === 'backward' && <RotateCcw className="w-5 h-5 sm:w-6 sm:h-6 text-[#E50914]" />}
+            {osdMessage.icon === 'volume' && <Volume2 className="w-5 h-5 sm:w-6 sm:h-6 text-white" />}
+            {osdMessage.icon === 'caption' && <Subtitles className="w-5 h-5 sm:w-6 sm:h-6 text-white" />}
+            {osdMessage.icon === 'play' && <Play className="w-5 h-5 sm:w-6 sm:h-6 fill-white" />}
+            {osdMessage.icon === 'pause' && <Pause className="w-5 h-5 sm:w-6 sm:h-6 fill-white" />}
+            <span>{osdMessage.text}</span>
+          </div>
+        </div>
+      )}
+
       {/* HTML5 Video Element or iOS/Safari WebCodecs MKV Canvas Engine */}
       {effectiveStreamUrl ? (
         <>
@@ -1812,13 +2150,9 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
             ref={canvasRef}
             onMouseMove={resetControlsTimer}
             onPointerMove={resetControlsTimer}
-            onClick={() => {
-              if (showAudioSubMenu) setShowAudioSubMenu(false);
-              else if (showWatchParty) setShowWatchParty(false);
-              else if (isMobile && playing) resetControlsTimer();
-              else togglePlay();
-            }}
-            className={`absolute inset-0 w-full h-full object-contain bg-black cursor-pointer ${
+            onClick={handleVideoClick}
+            onDoubleClick={handleVideoDoubleClick}
+            className={`absolute inset-0 w-full h-full object-contain bg-black ${hideCursor ? 'cursor-none' : 'cursor-pointer'} ${
               useWebCodecsCanvas ? 'block' : 'hidden'
             }`}
           />
@@ -1831,12 +2165,8 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
             crossOrigin="anonymous"
             onMouseMove={resetControlsTimer}
             onPointerMove={resetControlsTimer}
-            onClick={() => {
-              if (showAudioSubMenu) setShowAudioSubMenu(false);
-              else if (showWatchParty) setShowWatchParty(false);
-              else if (isMobile && playing) resetControlsTimer();
-              else togglePlay();
-            }}
+            onClick={handleVideoClick}
+            onDoubleClick={handleVideoDoubleClick}
             onPlay={() => {
               if (!useWebCodecsCanvas) setPlaying(true);
               if (!isFullscreen) {
@@ -1946,7 +2276,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
                 'O arquivo .MKV usa codec HEVC/Dolby exclusivo ou está concluindo sincronização.'
               );
             }}
-            className={`absolute inset-0 w-full h-full object-contain bg-black cursor-pointer ${
+            className={`absolute inset-0 w-full h-full object-contain bg-black ${hideCursor ? 'cursor-none' : 'cursor-pointer'} ${
               useWebCodecsCanvas ? 'hidden' : 'block'
             }`}
           />
@@ -2022,11 +2352,11 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
                   <span className="text-zinc-300">Play / Pausa</span>
                 </div>
                 <div className="flex items-center gap-3 p-2 bg-zinc-800/50 rounded">
-                  <kbd className="px-2 py-1 bg-zinc-700 rounded text-xs font-mono text-white min-w-[60px] text-center">← / →</kbd>
+                  <kbd className="px-2 py-1 bg-zinc-700 rounded text-xs font-mono text-white min-w-[60px] text-center">← / → / J / L</kbd>
                   <span className="text-zinc-300">Voltar / Avançar 10s</span>
                 </div>
                 <div className="flex items-center gap-3 p-2 bg-zinc-800/50 rounded">
-                  <kbd className="px-2 py-1 bg-zinc-700 rounded text-xs font-mono text-white min-w-[60px] text-center">F</kbd>
+                  <kbd className="px-2 py-1 bg-zinc-700 rounded text-xs font-mono text-white min-w-[60px] text-center">F / 2x Clique</kbd>
                   <span className="text-zinc-300">Tela Cheia</span>
                 </div>
                 <div className="flex items-center gap-3 p-2 bg-zinc-800/50 rounded">
@@ -2035,15 +2365,23 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
                 </div>
                 <div className="flex items-center gap-3 p-2 bg-zinc-800/50 rounded">
                   <kbd className="px-2 py-1 bg-zinc-700 rounded text-xs font-mono text-white min-w-[60px] text-center">↑ / ↓</kbd>
-                  <span className="text-zinc-300">Volume (quando focado)</span>
+                  <span className="text-zinc-300">Volume (±5%)</span>
                 </div>
                 <div className="flex items-center gap-3 p-2 bg-zinc-800/50 rounded">
-                  <kbd className="px-2 py-1 bg-zinc-700 rounded text-xs font-mono text-white min-w-[60px] text-center">1-9</kbd>
-                  <span className="text-zinc-300">Velocidade (0.5x-4x)</span>
+                  <kbd className="px-2 py-1 bg-zinc-700 rounded text-xs font-mono text-white min-w-[60px] text-center">0 - 9</kbd>
+                  <span className="text-zinc-300">Pular para 0% - 90%</span>
+                </div>
+                <div className="flex items-center gap-3 p-2 bg-zinc-800/50 rounded">
+                  <kbd className="px-2 py-1 bg-zinc-700 rounded text-xs font-mono text-white min-w-[60px] text-center">&lt; / &gt;</kbd>
+                  <span className="text-zinc-300">Velocidade (0.5x - 2x)</span>
                 </div>
                 <div className="flex items-center gap-3 p-2 bg-zinc-800/50 rounded">
                   <kbd className="px-2 py-1 bg-zinc-700 rounded text-xs font-mono text-white min-w-[60px] text-center">C</kbd>
                   <span className="text-zinc-300">Legendas On/Off</span>
+                </div>
+                <div className="flex items-center gap-3 p-2 bg-zinc-800/50 rounded">
+                  <kbd className="px-2 py-1 bg-zinc-700 rounded text-xs font-mono text-white min-w-[60px] text-center">I / P</kbd>
+                  <span className="text-zinc-300">Picture-in-Picture</span>
                 </div>
                 <div className="flex items-center gap-3 p-2 bg-zinc-800/50 rounded">
                   <kbd className="px-2 py-1 bg-zinc-700 rounded text-xs font-mono text-white min-w-[60px] text-center">S</kbd>
@@ -2056,8 +2394,8 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
               </div>
               <div className="pt-2 border-t border-zinc-700">
                 <p className="text-xs text-zinc-500 text-center">
-                  Dica: Toque duas vezes na tela (mobile) para avançar/voltar 10s<br />
-                  Deslize na direita para volume, na esquerda para brilho
+                  Dica: Duplo clique no vídeo alterna tela cheia. Media Session ativo para teclas de mídia e fones Bluetooth.<br />
+                  No mobile: Toque duplo para avançar/voltar 10s, deslize na direita para volume e esquerda para brilho.
                 </p>
               </div>
             </div>
@@ -2778,14 +3116,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
               value={currentTime}
               onChange={(e) => {
                 const next = parseFloat(e.target.value);
-                setCurrentTime(next);
-                if (useWebCodecsCanvas && canvasPlayerRef.current) {
-                  canvasPlayerRef.current.seek(next);
-                  audioControllerRef.current?.notifyClockSeek(next);
-                } else if (videoRef.current) {
-                  videoRef.current.currentTime = next;
-                }
-                broadcastPartySync(playing, next);
+                handleSeek(next);
               }}
               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
             />
@@ -2855,7 +3186,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
             </div>
 
             <button
-              onClick={handleCyclePlaybackRate}
+              onClick={() => handleCyclePlaybackRate()}
               className="inline-flex items-center justify-center px-2 py-1 rounded bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-700 text-[11px] sm:text-xs font-mono font-bold text-zinc-200 cursor-pointer touch-target-sm tap-highlight"
               title="Velocidade de reprodução"
             >

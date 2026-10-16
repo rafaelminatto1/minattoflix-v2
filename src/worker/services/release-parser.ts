@@ -56,8 +56,8 @@ export function parseReleaseName(filename: string, folderName?: string): ParsedR
   const isForcedSubtitle = /\b(forced|forcada|forçada)\b/i.test(filename);
 
   let sourceString = folderName && folderName.length > 3 ? folderName : filename.replace(/\.[a-z0-9]+$/i, '');
-  // Clean website advertising prefixes e.g. www UIndex org:
-  sourceString = sourceString.replace(/^www[\.\s_-]\w+[\.\s_-](?:org|com|net|to|me|info)[:\s_-]*/i, '');
+  // Clean website advertising prefixes e.g. www UIndex org: or www.uindex.org -
+  sourceString = sourceString.replace(/^(?:www[\.\s_-].*?(?:org|com|net|to|me|info)|https?:\/\/[^\s]+)[:\s_-]*/i, '');
 
   // Check series pattern S01E01, S01EP01, or S104
   const seriesMatch =

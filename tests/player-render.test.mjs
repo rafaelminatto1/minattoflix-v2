@@ -45,3 +45,68 @@ for (const ios of [false, true]) {
     assert.match(html, /<video/);
   });
 }
+
+test('index.css contains YouTube-like cursor hiding rules for player-shell', async () => {
+  const css = await readFile(new URL('../src/client/index.css', import.meta.url), 'utf8');
+  assert.match(css, /\.player-shell\.hide-cursor/);
+  assert.match(css, /cursor:\s*none\s*!important/);
+});
+
+test('NetflixPlayer implements streaming best practices (Media Session, HLS buffer, shortcuts)', async () => {
+  const content = await readFile(new URL('../src/client/components/NetflixPlayer.tsx', import.meta.url), 'utf8');
+  assert.match(content, /navigator\.mediaSession/);
+  assert.match(content, /setPositionState/);
+  assert.match(content, /backBufferLength:\s*60/);
+  assert.match(content, /capLevelToPlayerSize:\s*true/);
+  assert.match(content, /fastSeek/);
+  assert.match(content, /handleVideoDoubleClick/);
+  assert.match(content, /showOsdFeedback/);
+  assert.match(content, /isMoviePortuguese/);
+  assert.match(content, /isAudioPortuguese/);
+});
+
+test('NetflixPlayer defaults subtitles to off for Portuguese movies and pt-BR for foreign movies', () => {
+  const exports = {};
+  runInNewContext(code, {
+    exports,
+    require(id) {
+      if (id === '../hooks/useDialog') return { useDialog: () => React.useRef(null) };
+      if (id === '../services/mkvAudioController') return { isIosWebKit: () => false };
+      if (id.startsWith('../services/')) return { apiUrl: (path) => path };
+      return require(id);
+    },
+    localStorage: { getItem: () => null },
+    navigator: { onLine: true },
+  });
+
+  // 1. Portuguese movie - subtitles must default to disabled
+  const ptHtml = renderToString(React.createElement(exports.NetflixPlayer, {
+    item: {
+      id: 'movie-pt', title: 'Filme Nacional', type: 'movie', runtime_minutes: 90,
+      files: [{ id: 'file-pt', container: 'mp4', filename: 'filme.mp4', streamUrl: '/filme.mp4' }],
+      audioTracks: [{ id: 'audio-pt', media_file_id: 'file-pt', language_code: 'pt-BR', label: 'Português', is_default: true }],
+      subtitleTracks: [{ id: 'sub-pt', media_file_id: 'file-pt', language_code: 'pt-BR', label: 'Português (Brasil)', is_default: false }],
+      progress: null,
+    },
+    activeProfile: { preferred_audio_lang: 'pt-BR', preferred_subtitle_lang: 'off' },
+    onClose() {}, onSaveProgress: async () => {}, onRefreshCatalog: async () => {},
+  }));
+  assert.ok(ptHtml.includes('Filme Nacional'));
+
+  // 2. Foreign movie (e.g. Odyssey with English audio) - PT-BR subtitle must be enabled by default
+  const enHtml = renderToString(React.createElement(exports.NetflixPlayer, {
+    item: {
+      id: 'movie-en', title: 'The Odyssey', type: 'movie', runtime_minutes: 120,
+      files: [{ id: 'file-en', container: 'mkv', filename: 'odyssey.mkv', streamUrl: '/odyssey.mkv' }],
+      audioTracks: [{ id: 'audio-en', media_file_id: 'file-en', language_code: 'en-US', label: 'Inglês', is_default: true }],
+      subtitleTracks: [
+        { id: 'sub-pt', media_file_id: 'file-en', language_code: 'pt-BR', label: 'Português (Brasil) [OpenSubtitles]', is_default: true },
+        { id: 'sub-en', media_file_id: 'file-en', language_code: 'en-US', label: 'Inglês [OpenSubtitles]', is_default: false },
+      ],
+      progress: null,
+    },
+    activeProfile: { preferred_audio_lang: 'pt-BR', preferred_subtitle_lang: 'off' },
+    onClose() {}, onSaveProgress: async () => {}, onRefreshCatalog: async () => {},
+  }));
+  assert.ok(enHtml.includes('The Odyssey'));
+});

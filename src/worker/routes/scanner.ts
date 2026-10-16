@@ -8,6 +8,7 @@ import {
   parseMkvTracksFromBuffer,
   formatTrackLabel,
 } from '../services/mkv-ebml-probe';
+import { autoFetchSubtitlesForMovie } from '../services/subtitle-fetcher';
 import { fetchGDriveStream } from '../services/gdrive';
 import { fetchOneDriveStream } from '../services/onedrive';
 import { warmAllMovieHeadChunks } from './stream';
@@ -289,6 +290,73 @@ export async function executeCloudScannerSync(env: Env) {
             `;
             syncedExternalTracks++;
           }
+        }
+
+        // Auto-fetch PT-BR subtitles from the internet for all synchronized videos
+        try {
+          const existingPtSubs = await sql`
+            SELECT id FROM subtitle_tracks
+            WHERE media_file_id = ${primaryMediaFileId}
+              AND language_code = 'pt-BR'
+              AND LENGTH(COALESCE(content_vtt, '')) > 500
+          `;
+
+          if (existingPtSubs.length === 0) {
+            const fetched = await autoFetchSubtitlesForMovie(
+              String(mediaItem.title),
+              mediaItem.original_title ? String(mediaItem.original_title) : null,
+              mediaItem.release_year ? Number(mediaItem.release_year) : null,
+              String(mediaItem.overview || ''),
+              env.AI,
+              folderParsed.seasonNumber,
+              folderParsed.episodeNumber
+            );
+
+            // Check if audio has Portuguese
+            const audios = await sql`
+              SELECT language_code FROM audio_tracks WHERE media_file_id = ${primaryMediaFileId}
+            `;
+            const hasPtAudio =
+              audios.some((a) =>
+                ['pt-br', 'pt', 'por', 'pob'].includes(String(a.language_code || '').toLowerCase())
+              ) || folderParsed.isDualAudio;
+
+            for (const tr of fetched.tracks) {
+              // "mas em filme postugues deixes por padrão desativada quando reproduzido"
+              // In Portuguese movies, subtitles are OFF by default!
+              const isDefault = tr.languageCode === 'pt-BR' && !hasPtAudio;
+
+              const ins = await sql`
+                INSERT INTO subtitle_tracks (
+                  media_file_id, source_type, track_index, language_code,
+                  label, format, is_forced, is_default, content_vtt
+                )
+                VALUES (
+                  ${primaryMediaFileId},
+                  'external_file',
+                  97,
+                  ${tr.languageCode},
+                  ${tr.label},
+                  'vtt',
+                  false,
+                  ${isDefault},
+                  ${tr.vttContent}
+                )
+                RETURNING id
+              `;
+              if (env.MEDIA_BUCKET && ins[0]?.id && tr.vttContent) {
+                await env.MEDIA_BUCKET.put(`subtitles/${ins[0].id}.vtt`, tr.vttContent, {
+                  httpMetadata: { contentType: 'text/vtt; charset=utf-8' },
+                }).catch(() => {});
+              }
+              syncedExternalTracks++;
+            }
+            if (fetched.tracks.length > 0) {
+              logs.push(`Legendas PT-BR sincronizadas da internet para: ${mediaItem.title}`);
+            }
+          }
+        } catch (subErr) {
+          logs.push(`Aviso ao sincronizar legendas para ${mediaItem.title}: ${subErr instanceof Error ? subErr.message : String(subErr)}`);
         }
       }
     }
