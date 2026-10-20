@@ -1,3 +1,4 @@
+import {Artwork} from './Artwork';
 import React, { useState } from 'react';
 import { Play, Info, Volume2, VolumeX, Check, Plus, Languages, Subtitles } from 'lucide-react';
 import type { MediaItem } from '../types';
@@ -40,7 +41,7 @@ export const HeroBillboard: React.FC<HeroBillboardProps> = ({
         </div>
       ) : (
         <div className="absolute inset-0">
-          <img
+          <Artwork
             src={item.backdrop_url || item.poster_url}
             alt={item.title}
             className="w-full h-full object-cover object-center scale-105 transition-transform duration-1000"
@@ -61,7 +62,7 @@ export const HeroBillboard: React.FC<HeroBillboardProps> = ({
               M
             </span>
             <span className="text-[10px] sm:text-sm font-bold tracking-[0.18em] sm:tracking-[0.25em] text-zinc-300 uppercase truncate">
-              FILME EM DESTAQUE • ALTA DEFINIÇÃO
+              EM DESTAQUE
             </span>
           </div>
 
@@ -94,14 +95,6 @@ export const HeroBillboard: React.FC<HeroBillboardProps> = ({
                 <span className="border border-zinc-400/80 text-zinc-100 px-1.5 py-0.5 rounded-xs text-[10px] sm:text-[11px] uppercase tracking-wider">
                   {primaryFile.resolution === '2160p' ? '4K ULTRA HD' : primaryFile.resolution}
                 </span>
-                {primaryFile.dynamic_range && primaryFile.dynamic_range !== 'SDR' && (
-                  <span className="bg-amber-400/20 border border-amber-400 text-amber-300 px-1.5 py-0.5 rounded-xs text-[10px] sm:text-[11px] font-bold">
-                    {primaryFile.dynamic_range}
-                  </span>
-                )}
-                <span className="hidden sm:inline-block border border-zinc-500 text-zinc-200 px-1.5 py-0.5 rounded-xs text-[10px] sm:text-[11px]">
-                  {primaryFile.audio_channels || 'Canais a verificar'}
-                </span>
                 {primaryFile.is_dual_audio && (
                   <span className="bg-[#E50914]/25 border border-[#E50914] text-white px-2 py-0.5 rounded-xs text-[10px] sm:text-[11px] flex items-center gap-1">
                     <Languages className="w-3 h-3 text-[#E50914] shrink-0" /> {audioLabel(item)}
@@ -110,7 +103,7 @@ export const HeroBillboard: React.FC<HeroBillboardProps> = ({
               </>
             )}
 
-            <span className="bg-zinc-800/90 border border-zinc-700 text-zinc-300 px-2 py-0.5 rounded-xs text-[10px] sm:text-[11px] flex items-center gap-1">
+            <span className="hidden sm:flex bg-zinc-800/90 border border-zinc-700 text-zinc-300 px-2 py-0.5 rounded-xs text-[10px] sm:text-[11px] flex items-center gap-1">
               <Subtitles className="w-3 h-3 text-zinc-400 shrink-0" /> {item.subtitleTracks.length} legendas
             </span>
           </div>
@@ -125,20 +118,20 @@ export const HeroBillboard: React.FC<HeroBillboardProps> = ({
             <button
               disabled={!primaryFile}
               onClick={() => onPlay(item)}
-              className="w-11 sm:w-auto sm:flex-initial flex items-center justify-center gap-2 bg-white hover:bg-white/85 text-black font-bold text-sm sm:text-lg px-0 sm:px-6 md:px-8 py-2.5 md:py-3 rounded transition shadow-lg cursor-pointer touch-target tap-highlight"
+              className="flex-1 sm:flex-initial flex items-center justify-center gap-2 bg-white hover:bg-white/85 text-black font-bold text-sm sm:text-lg px-4 sm:px-6 md:px-8 py-2.5 md:py-3 rounded transition shadow-lg cursor-pointer touch-target tap-highlight"
               aria-label={item.progress && !item.progress.is_completed && item.progress.position_seconds > 15 ? `Continuar ${item.title}` : `Assistir ${item.title}`}
             >
               <Play className="w-4 sm:w-6 h-4 sm:h-6 fill-black shrink-0" />
-              <span className="hidden sm:inline">{item.progress && !item.progress.is_completed && item.progress.position_seconds > 15 ? 'Continuar' : 'Assistir'}</span>
+              <span>{item.progress && !item.progress.is_completed && item.progress.position_seconds > 15 ? 'Continuar' : 'Assistir'}</span>
             </button>
 
             <button
               onClick={() => onMoreInfo(item)}
-              className="w-11 sm:w-auto sm:flex-initial flex items-center justify-center gap-2 bg-zinc-500/70 hover:bg-zinc-500/50 backdrop-blur-md text-white font-semibold text-sm sm:text-lg px-0 sm:px-6 md:px-7 py-2.5 md:py-3 rounded transition cursor-pointer touch-target tap-highlight"
+              className="flex-1 sm:flex-initial flex items-center justify-center gap-2 bg-zinc-500/70 hover:bg-zinc-500/50 backdrop-blur-md text-white font-semibold text-sm sm:text-lg px-3 sm:px-6 md:px-7 py-2.5 md:py-3 rounded transition cursor-pointer touch-target tap-highlight"
               aria-label={`Mais informações sobre ${item.title}`}
             >
               <Info className="w-4 sm:w-6 h-4 sm:h-6 shrink-0" />
-              <span className="hidden sm:inline truncate">Mais informações</span>
+              <span className="truncate">Detalhes</span>
             </button>
 
             <button

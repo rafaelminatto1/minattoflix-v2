@@ -1,3 +1,4 @@
+import {Artwork} from './Artwork';
 import React, { useEffect, useRef, useState } from 'react';
 import { audioLabel, preferredFile, prewarmStream, qualityLabel } from '../services/catalog';
 import {
@@ -142,16 +143,15 @@ export const MediaRow: React.FC<MediaRowProps> = ({
               {/* Thumbnail / Poster Area */}
               <button
                 type="button"
-                aria-label={`Assistir ${item.title}`}
-                disabled={!primaryFile}
+                aria-label={`Ver detalhes de ${item.title}`}
                 onFocus={(e) => {
                   prewarmStream(item);
                   e.currentTarget.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
                 }}
-                onClick={() => onPlay(item)}
+                onClick={() => onMoreInfo(item)}
                 className="relative aspect-[2/3] w-full overflow-hidden bg-zinc-900 cursor-pointer tap-highlight focus-visible:ring-4 focus-visible:ring-[#E50914]"
               >
-                <img
+                <Artwork
                   src={item.poster_url}
                   alt={item.title}
                   loading="lazy"
@@ -219,7 +219,7 @@ export const MediaRow: React.FC<MediaRowProps> = ({
                         onClick={() => onPlay(item)}
                         disabled={!primaryFile}
                         className="w-8 h-8 rounded-full bg-white hover:bg-zinc-200 text-black flex items-center justify-center transition cursor-pointer touch-target-sm tap-highlight"
-                        title="Assistir agora"
+                        aria-label={`Assistir ${item.title}`} title="Assistir agora"
                       >
                         <Play className="w-4 h-4 fill-black ml-0.5" />
                       </button>
@@ -240,7 +240,7 @@ export const MediaRow: React.FC<MediaRowProps> = ({
                     <button
                       onClick={() => onMoreInfo(item)}
                       className="w-8 h-8 rounded-full border border-zinc-500 hover:border-white bg-zinc-900 text-white flex items-center justify-center transition cursor-pointer touch-target-sm tap-highlight"
-                      title="Mais informações, faixas de áudio e legendas"
+                      aria-label={`Detalhes de ${item.title}`} title="Mais informações"
                     >
                       <ChevronDown className="w-4 h-4" />
                     </button>
@@ -250,7 +250,7 @@ export const MediaRow: React.FC<MediaRowProps> = ({
                   <button
                     type="button"
                     onClick={() => onMoreInfo(item)}
-                    className="media-card-title w-full font-bold text-xs sm:text-sm text-left text-white line-clamp-1 hover:text-[#E50914] transition cursor-pointer py-0.5 tap-highlight"
+                    className="media-card-title w-full font-bold text-sm text-left text-white line-clamp-2 hover:text-[#E50914] transition cursor-pointer py-0.5 tap-highlight"
                   >
                     {item.title}
                   </button>
@@ -273,15 +273,11 @@ export const MediaRow: React.FC<MediaRowProps> = ({
                   </span>
                   <span className="flex items-center gap-1 shrink-0">
                     <Subtitles className="w-3 h-3 text-zinc-400 shrink-0" />
-                    {item.subtitleTracks.length} Legendas
+                    {item.subtitleTracks.length?'Com legendas':'Sem legendas'}
                   </span>
-                  {primaryFile && (
-                    <span className="hidden sm:flex text-zinc-500 items-center gap-0.5">
-                      <HardDrive className="w-2.5 h-2.5" />
-                      {formatBytes(primaryFile.size_bytes)}
-                    </span>
-                  )}
+
                 </div>
+                {onRemoveProgress && progress && <p className="mt-2 text-sm text-zinc-300 flex items-center gap-1"><Clock size={14}/>{Math.max(1,Math.ceil((progress.duration_seconds-progress.position_seconds)/60))} min restantes</p>}
                 {onRemoveProgress && (
                   <button
                     type="button"

@@ -1,293 +1,44 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { Cloud, Search, X, RefreshCw, ChevronDown, Home, Film, Sparkles, Bookmark, Shield, Baby } from 'lucide-react';
-import type { Profile } from '../types';
-
-export type NavSection = 'home' | 'movies' | '4k' | 'dc' | 'kids' | 'mylist';
-
+import React,{useEffect,useRef,useState} from 'react';
+import {Search,X,Home,Bookmark,User,Settings} from 'lucide-react';
+import type {Profile} from '../types';
+import {apiUrl,saveSession} from '../services/catalog';
+import {useAccess} from '../hooks/useAccess';
+import {useDialog} from '../hooks/useDialog';
+export type NavSection='home'|'movies'|'4k'|'dc'|'kids'|'mylist';
 interface NavbarProps {
-  activeSection: NavSection;
-  onSelectSection: (section: NavSection) => void;
-  searchQuery: string;
-  onSearchChange: (q: string) => void;
-  activeProfile: Profile;
-  onSwitchProfile: () => void;
-  onOpenCloudStudio: () => void;
-  onQuickSync: () => Promise<void>;
-  isSyncing: boolean;
-  totalMovies: number;
+ activeSection:NavSection;onSelectSection:(section:NavSection)=>void;searchQuery:string;onSearchChange:(query:string)=>void;
+ activeProfile:Profile;onSwitchProfile:()=>void;onOpenCloudStudio:()=>void;onQuickSync:()=>Promise<void>;isSyncing:boolean;totalMovies:number;
 }
-
-export const Navbar: React.FC<NavbarProps> = ({
-  activeSection,
-  onSelectSection,
-  searchQuery,
-  onSearchChange,
-  activeProfile,
-  onSwitchProfile,
-  onOpenCloudStudio,
-  onQuickSync,
-  isSyncing,
-  totalMovies,
-}) => {
-  const headerRef = useRef<HTMLElement>(null);
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  const [isScrolled, setIsScrolled] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);
-
-  // Keyboard shortcut (Cmd/Ctrl + K or /) to focus search
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.key === 'k' && (e.metaKey || e.ctrlKey)) || (e.key === '/' && !['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName))) {
-        e.preventDefault();
-        setSearchOpen(true);
-        setTimeout(() => searchInputRef.current?.focus(), 50);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
-
-  useEffect(() => {
-    const onScroll = () => {
-      setIsScrolled(window.scrollY > 24);
-    };
-    onScroll();
-    window.addEventListener('scroll', onScroll, { passive: true });
-    return () => window.removeEventListener('scroll', onScroll);
-  }, []);
-
-  useEffect(() => {
-    const header = headerRef.current;
-    if (!header) return;
-    const root = document.documentElement;
-    const previous = root.style.getPropertyValue('--app-header-height');
-    const update = () => root.style.setProperty('--app-header-height', header.offsetHeight + 'px');
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(header);
-    return () => {
-      observer.disconnect();
-      if (previous) root.style.setProperty('--app-header-height', previous);
-      else root.style.removeProperty('--app-header-height');
-    };
-  }, []);
-
-  const navItems: Array<{ id: NavSection; label: string }> = [
-    { id: 'home', label: 'Início' },
-    { id: 'movies', label: 'Filmes' },
-    { id: '4k', label: 'Em 4K' },
-    { id: 'dc', label: 'Heróis & DC' },
-    { id: 'kids', label: 'Família & Animação' },
-    { id: 'mylist', label: 'Minha Lista' },
-  ];
-
-  return (
-    <>
-      <header
-        ref={headerRef}
-        className={`app-header fixed top-0 inset-x-0 z-40 transition-colors duration-500 safe-top safe-left safe-right ${
-          isScrolled || searchOpen || Boolean(searchQuery)
-            ? 'bg-[#141414]/95 backdrop-blur-md shadow-[0_6px_25px_rgba(0,0,0,0.75)]'
-            : 'bg-gradient-to-b from-black/95 via-black/60 to-transparent'
-        }`}
-      >
-        <div className="max-w-[1800px] mx-auto px-3 sm:px-4 md:px-12 h-14 sm:h-16 md:h-[68px] flex items-center justify-between gap-2 sm:gap-4">
-          {/* Left: Netflix Logo + Links */}
-          <div className="flex items-center gap-3 xl:gap-8 min-w-0">
-            <button
-              onClick={() => {
-                onSelectSection('home');
-                onSearchChange('');
-              }}
-              className="flex items-center gap-2 cursor-pointer touch-target-sm tap-highlight shrink-0"
-              aria-label="Ir para o Início"
-            >
-              <span className="font-netflix-logo text-2xl sm:text-2xl lg:text-3xl text-[#E50914] tracking-wider drop-shadow-[0_2px_10px_rgba(229,9,20,0.4)]">
-                MINATTOFLIX
-              </span>
-            </button>
-
-            <nav className="hidden xl:flex items-center gap-4 text-sm whitespace-nowrap">
-              {navItems.map((item) => {
-                const active = activeSection === item.id && !searchQuery;
-                return (
-                  <button
-                    aria-current={active ? 'page' : undefined}
-                    key={item.id}
-                    onClick={() => {
-                      onSelectSection(item.id);
-                      onSearchChange('');
-                    }}
-                    className={`transition-colors cursor-pointer touch-target-inline px-1 tap-highlight ${
-                      active ? 'text-white font-semibold' : 'text-zinc-300 hover:text-zinc-100 font-normal'
-                    }`}
-                  >
-                    {item.label}
-                  </button>
-                );
-              })}
-            </nav>
-          </div>
-
-          {/* Right: Search, Cloud Sync Studio, Profile */}
-          <div className="flex items-center gap-1.5 min-[380px]:gap-2.5 md:gap-4 shrink-0">
-            {/* Expandable Netflix Search Box */}
-            <div
-              className={`flex items-center transition-all duration-300 ${
-                searchOpen || searchQuery
-                  ? 'w-11 justify-center sm:justify-start sm:bg-black/85 sm:border sm:border-white/80 sm:px-3 sm:py-1.5 rounded-sm sm:w-64'
-                  : 'w-11 justify-center'
-              }`}
-            >
-              <button
-                type="button"
-                onClick={() => setSearchOpen((prev) => !prev)}
-                className="text-white hover:text-zinc-300 flex items-center justify-center cursor-pointer touch-target-sm tap-highlight"
-                aria-label="Buscar no catálogo"
-                aria-expanded={searchOpen || Boolean(searchQuery)}
-                title="Buscar filmes, atores, 4K, Dual Áudio..."
-              >
-                <Search className="w-5 h-5" />
-              </button>
-              {(searchOpen || searchQuery) && (
-                <>
-                  <input
-                    ref={searchInputRef}
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => onSearchChange(e.target.value)}
-                    placeholder="Títulos, 4K, Dual Áudio..."
-                    className="hidden sm:block bg-transparent text-sm text-white placeholder-zinc-400 ml-2.5 w-full outline-none"
-                  />
-                  {searchQuery && (
-                    <button
-                      type="button"
-                      onClick={() => onSearchChange('')}
-                      aria-label="Limpar busca"
-                      className="hidden sm:block text-zinc-400 hover:text-white cursor-pointer touch-target-sm tap-highlight"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  )}
-                </>
-              )}
-            </div>
-
-            {/* Quick Sync Button */}
-            <button
-              onClick={onQuickSync}
-              disabled={isSyncing}
-              aria-label="Sincronizar nuvem"
-              title="Sincronizar catálogo agora"
-              className="flex items-center justify-center gap-1.5 text-xs font-medium bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 px-2.5 lg:px-3 py-1.5 rounded transition cursor-pointer touch-target-sm tap-highlight"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 text-[#E50914] ${isSyncing ? 'animate-spin' : ''}`} />
-              <span className="hidden lg:inline">{isSyncing ? 'Sincronizando...' : 'Atualizar'}</span>
-            </button>
-
-            {/* Cloud Studio Button */}
-            <button
-              onClick={onOpenCloudStudio}
-              aria-label="Gerenciar catálogo"
-              className="flex items-center gap-1.5 text-xs font-semibold bg-[#E50914]/15 hover:bg-[#E50914]/25 border border-[#E50914]/50 text-white px-2.5 sm:px-3 py-1.5 rounded transition cursor-pointer touch-target-sm tap-highlight"
-              title="Gerenciar catálogo, Dual Áudio e Legendas"
-            >
-              <Cloud className="w-4 h-4 text-[#E50914] shrink-0" />
-              <span className="hidden lg:inline">Catálogo</span>
-              <span className="bg-[#E50914] text-white text-[10px] font-bold px-1.5 py-0.5 leading-none rounded-full">
-                {totalMovies}
-              </span>
-            </button>
-
-            {/* Profile Switcher */}
-            <button
-              onClick={onSwitchProfile}
-              className="flex items-center gap-1.5 group cursor-pointer focus:outline-none touch-target-sm tap-highlight"
-              title={`Perfil ativo: ${activeProfile.name} (Clique para trocar)`}
-            >
-              <img
-                src={activeProfile.avatar_url}
-                alt={activeProfile.name}
-                className="w-8 h-8 rounded object-cover ring-1 ring-white/20 group-hover:ring-white transition"
-              />
-              <ChevronDown className="hidden sm:block w-4 h-4 text-white group-hover:rotate-180 transition-transform duration-200" />
-            </button>
-          </div>
-        </div>
-
-        {(searchOpen || searchQuery) && (
-          <div className="sm:hidden px-3 pb-2.5">
-            <label className="flex items-center gap-2 bg-black/95 border border-zinc-600 focus-within:border-white rounded-md px-3 py-2 shadow-lg">
-              <Search className="w-4 h-4 text-zinc-400 shrink-0" />
-              <input
-                aria-label="Buscar títulos, atores e idiomas"
-                autoFocus
-                value={searchQuery}
-                onChange={(event) => onSearchChange(event.target.value)}
-                placeholder="Buscar no catálogo…"
-                className="min-w-0 w-full bg-transparent outline-none text-sm text-white placeholder-zinc-400"
-              />
-              <button
-                type="button"
-                aria-label="Fechar busca"
-                onClick={() => {
-                  onSearchChange('');
-                  setSearchOpen(false);
-                }}
-                className="flex items-center justify-center text-zinc-400 hover:text-white touch-target-sm tap-highlight -mr-1"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </label>
-          </div>
-        )}
-
-        {/* Mobile/Tablet horizontal category pills bar */}
-        <div className="hidden sm:flex xl:hidden items-center gap-2 overflow-x-auto no-scrollbar px-3 sm:px-4 pb-2.5 pt-0.5 text-xs">
-          {navItems.map((item) => {
-            const isActive = activeSection === item.id && !searchQuery;
-            return (
-              <button
-                key={item.id}
-                onClick={() => {
-                  onSelectSection(item.id);
-                  onSearchChange('');
-                }}
-                className={`touch-target-inline shrink-0 flex items-center justify-center whitespace-nowrap px-3.5 py-1.5 rounded-full border transition cursor-pointer tap-highlight ${
-                  isActive
-                    ? 'bg-white text-black border-white font-semibold shadow-sm'
-                    : 'border-zinc-700/90 text-zinc-200 bg-black/55 backdrop-blur-xs hover:border-zinc-500'
-                }`}
-              >
-                {item.label}
-              </button>
-            );
-          })}
-        </div>
-      </header>
-
-      {/* Mobile Fixed Bottom App Navigation Bar */}
-      <nav
-        aria-label="Navegação rápida móvel"
-        className="mobile-navigation sm:hidden fixed bottom-0 inset-x-0 z-40 bg-[#121212]/95 backdrop-blur-lg border-t border-zinc-800/90 safe-bottom safe-left safe-right"
-      >
-        <div className="grid grid-cols-6 h-16">
-          {navItems.map((item) => {
-            const Icon = { home: Home, movies: Film, '4k': Sparkles, dc: Shield, kids: Baby, mylist: Bookmark }[item.id];
-            const active = activeSection === item.id && !searchQuery;
-            return (
-              <button key={item.id} type="button" aria-label={item.label} title={item.label}
-                aria-current={active ? 'page' : undefined}
-                onClick={() => { onSelectSection(item.id); onSearchChange(''); }}
-                className={`flex flex-col gap-1 items-center justify-center touch-target tap-highlight transition ${active ? 'text-[#E50914] bg-white/5' : 'text-zinc-300 hover:text-white'}`}>
-                <Icon className="w-5 h-5" aria-hidden="true" />
-                <span className="text-[10px] leading-tight font-medium">{{home:'Início',movies:'Filmes','4k':'4K',dc:'Heróis',kids:'Família',mylist:'Minha lista'}[item.id]}</span>
-              </button>
-            );
-          })}
-        </div>
-      </nav>
-    </>
-  );
-};
-
+const categories:Array<{id:NavSection;label:string}>=[{id:'home',label:'Para você'},{id:'movies',label:'Filmes'},{id:'4k',label:'4K'},{id:'dc',label:'Heróis'},{id:'kids',label:'Família'}];
+function ProfileMenu({props,onClose}:{props:NavbarProps;onClose:()=>void}) {
+ const {admin}=useAccess();const dialog=useDialog(onClose);
+ const [code,setCode]=useState('');const [error,setError]=useState('');const [busy,setBusy]=useState(false);const [login,setLogin]=useState(false);
+ return <div ref={dialog} role="dialog" aria-modal="true" aria-label="Seu perfil" tabIndex={-1} className="fixed inset-0 z-[80] bg-black/80 flex items-end sm:items-center justify-center p-4 safe-top safe-bottom" onClick={onClose}>
+  <div className="w-full max-w-md bg-zinc-900 border border-zinc-700 rounded-2xl p-5 space-y-4 max-h-[90dvh] overflow-y-auto" onClick={event=>event.stopPropagation()}>
+   <div className="flex items-center justify-between"><h2 className="text-xl font-bold">Seu perfil</h2><button aria-label="Fechar perfil" onClick={onClose}><X/></button></div>
+   <div className="flex items-center gap-3"><img src={props.activeProfile.avatar_url} alt="" className="w-12 h-12 rounded-lg"/><p className="font-semibold">{props.activeProfile.name}</p></div>
+   <button className="w-full text-left bg-zinc-800 rounded-lg p-3" onClick={()=>{onClose();props.onSwitchProfile();}}>Trocar perfil</button>
+   <button className="w-full text-left bg-zinc-800 rounded-lg p-3" onClick={()=>{onClose();props.onSelectSection('mylist');props.onSearchChange('');}}>Minha lista</button>
+   {admin?<><h3 className="font-semibold text-zinc-300">Administração</h3><button className="w-full text-left bg-zinc-800 rounded-lg p-3" onClick={()=>{onClose();props.onOpenCloudStudio();}}>Gerenciar biblioteca</button><button disabled={props.isSyncing} className="w-full text-left bg-zinc-800 rounded-lg p-3" onClick={()=>{void props.onQuickSync().catch(()=>{});}}>{props.isSyncing?'Atualizando…':'Atualizar catálogo'}</button><button className="w-full text-left p-3 text-zinc-300" onClick={()=>{saveSession('');location.reload();}}>Sair da administração</button></>:<button className="flex items-center gap-2 text-sm text-zinc-400 py-2" onClick={()=>setLogin(!login)} aria-expanded={login}><Settings size={18}/>Acesso administrativo</button>}
+   {login&&!admin&&<form className="space-y-3" onSubmit={async event=>{event.preventDefault();setBusy(true);setError('');try{const response=await fetch(apiUrl('/api/session'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code})});const result=await response.json();if(!response.ok||result.role!=='admin')throw new Error('Código administrativo inválido.');saveSession(result.token);location.reload();}catch(err){setError(err instanceof Error?err.message:'Não foi possível entrar.');}finally{setBusy(false);}}}><label htmlFor="admin-code" className="block text-sm">Código administrativo</label><input id="admin-code" type="password" autoComplete="current-password" required maxLength={200} value={code} onChange={event=>setCode(event.target.value)} className="w-full rounded bg-zinc-800 p-3"/><button disabled={busy} className="w-full rounded bg-red-600 p-3 font-semibold">{busy?'Verificando…':'Entrar'}</button>{error&&<p role="alert" className="text-red-300">{error}</p>}</form>}
+  </div>
+ </div>;
+}
+export function Navbar(props:NavbarProps) {
+ const {activeSection,onSelectSection,searchQuery,onSearchChange,activeProfile}=props;
+ const header=useRef<HTMLElement>(null);const input=useRef<HTMLInputElement>(null);
+ const [searchOpen,setSearchOpen]=useState(false);const [profileOpen,setProfileOpen]=useState(false);
+ const historyKey=`minatto-search:${activeProfile.id}`;const [history,setHistory]=useState<string[]>([]);
+ useEffect(()=>{try{const value=JSON.parse(localStorage.getItem(historyKey)||'[]');setHistory(Array.isArray(value)?value.filter(x=>typeof x==='string').slice(0,6):[]);}catch{setHistory([]);}},[historyKey]);
+ useEffect(()=>{if(searchQuery.trim().length<2)return;const timer=setTimeout(()=>{setHistory(previous=>{const next=[searchQuery.trim(),...previous.filter(term=>term!==searchQuery.trim())].slice(0,6);try{localStorage.setItem(historyKey,JSON.stringify(next));}catch{}return next;});},1500);return()=>clearTimeout(timer);},[searchQuery,historyKey]);
+ useEffect(()=>{if(searchOpen)input.current?.focus();},[searchOpen]);
+ useEffect(()=>{const onKey=(event:KeyboardEvent)=>{if(event.key==='k'&&(event.metaKey||event.ctrlKey)){event.preventDefault();setSearchOpen(true);}if(event.key==='Escape')setSearchOpen(false);};window.addEventListener('keydown',onKey);return()=>window.removeEventListener('keydown',onKey);},[]);
+ useEffect(()=>{if(!header.current)return;const update=()=>document.documentElement.style.setProperty('--app-header-height',`${header.current?.offsetHeight||0}px`);update();const observer=new ResizeObserver(update);observer.observe(header.current);return()=>observer.disconnect();},[searchOpen]);
+ const choose=(section:NavSection)=>{onSelectSection(section);onSearchChange('');setSearchOpen(false);};
+ const searching=searchOpen||Boolean(searchQuery);
+ const tabs=[{id:'home',label:'Início',icon:Home,action:()=>choose('home'),active:activeSection!=='mylist'&&!searching},{id:'search',label:'Buscar',icon:Search,action:()=>{setSearchOpen(true);onSelectSection('movies');},active:searching},{id:'mylist',label:'Minha lista',icon:Bookmark,action:()=>choose('mylist'),active:activeSection==='mylist'&&!searching},{id:'profile',label:'Perfil',icon:User,action:()=>setProfileOpen(true),active:profileOpen}];
+ return <><header ref={header} className="app-header fixed top-0 inset-x-0 z-40 bg-[#141414]/95 backdrop-blur-md safe-top safe-left safe-right">
+  <div className="max-w-[1800px] mx-auto px-4 md:px-12 h-16 flex items-center justify-between gap-4"><button onClick={()=>choose('home')} aria-label="Ir para o início" className="font-netflix-logo text-2xl text-red-600 tracking-wider">MINATTOFLIX</button><div className="flex items-center gap-3"><button aria-label="Buscar no catálogo" aria-expanded={searching} onClick={()=>setSearchOpen(!searching)}><Search/></button><button aria-label={`Abrir perfil de ${activeProfile.name}`} onClick={()=>setProfileOpen(true)}><img src={activeProfile.avatar_url} alt="" className="w-9 h-9 rounded-lg"/></button></div></div>
+  {searching?<div className="px-4 md:px-12 pb-3 max-w-[1800px] mx-auto"><div className="flex items-center gap-2"><label className="flex-1 flex items-center gap-2 bg-zinc-800 rounded-lg px-3"><Search size={20}/><input ref={input} type="search" aria-label="Buscar títulos, atores e idiomas" placeholder="Títulos, atores ou idiomas" value={searchQuery} onChange={event=>onSearchChange(event.target.value)} className="w-full min-w-0 bg-transparent outline-none py-3 text-base"/>{searchQuery&&<button aria-label="Limpar busca" onClick={()=>onSearchChange('')}><X size={18}/></button>}</label><button className="text-sm" onClick={()=>{setSearchOpen(false);onSearchChange('');}}>Cancelar</button></div>{!searchQuery&&history.length>0&&<div className="pt-3"><div className="flex justify-between items-center text-sm text-zinc-300"><span>Buscas recentes</span><button onClick={()=>{setHistory([]);try{localStorage.removeItem(historyKey);}catch{}}}>Limpar histórico</button></div><div className="flex gap-2 flex-wrap mt-2">{history.map(term=><button key={term} className="text-sm rounded-full bg-zinc-800 px-3 py-2" onClick={()=>onSearchChange(term)}>{term}</button>)}</div></div>}</div>:<nav aria-label="Categorias" className="max-w-[1800px] mx-auto flex gap-2 overflow-x-auto no-scrollbar px-4 md:px-12 pb-3">{categories.map(category=><button key={category.id} aria-pressed={activeSection===category.id} onClick={()=>choose(category.id)} className={`shrink-0 rounded-full px-4 py-2 text-sm border ${activeSection===category.id?'bg-white text-black border-white':'border-zinc-700 text-zinc-200'}`}>{category.label}</button>)}<button onClick={()=>choose('mylist')} className="hidden sm:block shrink-0 rounded-full px-4 py-2 text-sm border border-zinc-700">Minha lista</button></nav>}
+ </header><nav aria-label="Navegação principal" className="mobile-navigation sm:hidden fixed bottom-0 inset-x-0 z-40 bg-[#141414]/95 border-t border-zinc-800 safe-bottom safe-left safe-right"><div className="grid grid-cols-4 h-16">{tabs.map(tab=><button key={tab.id} aria-current={tab.active?'page':undefined} onClick={tab.action} className={`flex flex-col items-center justify-center gap-1 ${tab.active?'text-white font-semibold':'text-zinc-400'}`}><tab.icon size={22}/><span className="text-xs">{tab.label}</span></button>)}</div></nav>{profileOpen&&<ProfileMenu props={props} onClose={()=>setProfileOpen(false)}/>}</>;
+}

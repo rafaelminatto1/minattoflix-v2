@@ -308,3 +308,15 @@ footer.safe-bottom { --safe-bottom-space: 6rem; }
   -webkit-text-stroke: 4px #595959;
   text-shadow: 0 4px 12px rgba(0,0,0,0.9);
 }
+
+/* Shared touch, focus and text behavior across catalog and playback. */
+button, summary, [role="button"] { min-height: 44px; }
+button:focus-visible, summary:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid white; outline-offset: 3px; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+input, select, textarea { font-size: 16px; }
+.text-\[10px\], .text-\[11px\] { font-size: .75rem; line-height: 1.4; }
+.text-zinc-500 { color: #a1a1aa; }
+.catalog-main { padding-top: calc(var(--app-header-height, 112px) + 24px) !important; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}

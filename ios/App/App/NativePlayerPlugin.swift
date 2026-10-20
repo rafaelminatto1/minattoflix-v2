@@ -16,6 +16,8 @@ private class MovieViewController: AVPlayerViewController {
     override var prefersStatusBarHidden: Bool { true }
     override var prefersHomeIndicatorAutoHidden: Bool { true }
     private let controls = UIStackView()
+    private let centerControls = UIStackView()
+    private let timeLabel = UILabel()
     private let seekBar = UISlider()
     private let playButton = UIButton(type: .system)
     private var hideTimer: Timer?
@@ -33,11 +35,27 @@ private class MovieViewController: AVPlayerViewController {
         let row = UIStackView(); row.distribution = .fillEqually
         let close = button("Voltar", action: #selector(closeMovie))
         let back = button("−10 s", action: #selector(skipBack))
-        playButton.setTitle("Pausar", for: .normal)
+        playButton.setImage(UIImage(systemName: "pause.fill"), for: .normal)
+        playButton.setPreferredSymbolConfiguration(UIImage.SymbolConfiguration(pointSize: 32), forImageIn: .normal)
+        playButton.accessibilityLabel = "Pausar"
         playButton.addTarget(self, action: #selector(togglePlayback), for: .touchUpInside)
-        [close, back, playButton, button("+10 s", action: #selector(skipForward)), trackMenu()].forEach { row.addArrangedSubview($0) }
+        [close, trackMenu()].forEach { row.addArrangedSubview($0) }
+        centerControls.axis = .horizontal; centerControls.spacing = 28
+        [back, playButton, button("+10 s", action: #selector(skipForward))].forEach {
+            $0.backgroundColor = UIColor.black.withAlphaComponent(0.55)
+            $0.tintColor = .white
+            $0.layer.cornerRadius = 32
+            $0.widthAnchor.constraint(equalToConstant: 72).isActive = true
+            $0.heightAnchor.constraint(equalToConstant: 64).isActive = true
+            centerControls.addArrangedSubview($0)
+        }
+        centerControls.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(centerControls)
+        NSLayoutConstraint.activate([centerControls.centerXAnchor.constraint(equalTo: view.centerXAnchor), centerControls.centerYAnchor.constraint(equalTo: view.centerYAnchor)])
+        seekBar.accessibilityLabel = "Posição do filme"
+        timeLabel.textColor = .white; timeLabel.font = .preferredFont(forTextStyle: .caption1)
         seekBar.addTarget(self, action: #selector(seekChanged), for: .valueChanged)
-        controls.addArrangedSubview(row); controls.addArrangedSubview(seekBar)
+        controls.addArrangedSubview(row); controls.addArrangedSubview(seekBar); controls.addArrangedSubview(timeLabel)
         controls.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(controls)
         NSLayoutConstraint.activate([
@@ -46,14 +64,17 @@ private class MovieViewController: AVPlayerViewController {
             controls.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
             row.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
         ])
-        controls.isHidden = true
+        controls.isHidden = true; centerControls.isHidden = true
         progressTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             guard let self = self, let player = self.player else { return }
             let duration = player.currentItem?.duration.seconds ?? 0
             if duration.isFinite && duration > 0 && !self.seekBar.isTracking {
                 self.seekBar.value = Float(player.currentTime().seconds / duration)
+                let remaining = max(0, Int((duration - player.currentTime().seconds) / 60))
+                self.timeLabel.text = "\(remaining) min restantes"
             }
-            self.playButton.setTitle(player.rate == 0 ? "Reproduzir" : "Pausar", for: .normal)
+            self.playButton.setImage(UIImage(systemName: player.rate == 0 ? "play.fill" : "pause.fill"), for: .normal)
+            self.playButton.accessibilityLabel = player.rate == 0 ? "Reproduzir" : "Pausar"
         }
     }
     private func button(_ title: String, action: Selector) -> UIButton {
@@ -79,9 +100,12 @@ private class MovieViewController: AVPlayerViewController {
         return button
     }
     @objc private func toggleControls(_ gesture: UITapGestureRecognizer) {
-        if controls.bounds.contains(gesture.location(in: controls)) && !controls.isHidden { return }
+        if !controls.isHidden && (controls.bounds.contains(gesture.location(in: controls)) || centerControls.bounds.contains(gesture.location(in: centerControls))) { return }
         controls.isHidden.toggle(); hideTimer?.invalidate()
-        if !controls.isHidden { hideTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in self?.controls.isHidden = true } }
+        centerControls.isHidden = controls.isHidden
+        if !controls.isHidden { hideTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in
+            self?.controls.isHidden = true; self?.centerControls.isHidden = true
+        } }
     }
     @objc private func closeMovie() { dismiss(animated: true) }
     @objc private func togglePlayback() { if player?.rate == 0 { player?.play() } else { player?.pause() } }

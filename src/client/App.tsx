@@ -385,12 +385,12 @@ export const App: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen dvh-100 bg-[#141414] flex flex-col items-center justify-center gap-4">
-        <span className="font-netflix-logo text-5xl text-[#E50914] tracking-wider animate-pulse">
-          MINATTOFLIX
-        </span>
-        <div className="w-10 h-10 border-4 border-[#E50914] border-t-transparent rounded-full animate-spin" />
-      </div>
+      <main role="status" aria-label="Carregando biblioteca" aria-busy="true" className="min-h-screen bg-[#141414] p-5 safe-top">
+        <p className="font-netflix-logo text-3xl text-red-600 py-5">MINATTOFLIX</p>
+        <div aria-hidden="true" className="shimmer-skeleton h-[38vh] rounded-xl mb-6"/>
+        <p className="text-zinc-300 mb-4">Preparando sua biblioteca…</p>
+        <div aria-hidden="true" className="grid grid-cols-3 sm:grid-cols-6 gap-3">{Array.from({length:6},(_,index)=><div key={index} className="shimmer-skeleton aspect-[2/3] rounded-lg"/>)}</div>
+      </main>
     );
   }
 
@@ -439,7 +439,7 @@ export const App: React.FC = () => {
                         ? 'Animação & Família'
                         : activeSection === 'mylist'
                           ? `Minha Lista (${activeProfile.name})`
-                          : 'Todos os Filmes na Nuvem'}
+                          : 'Todos os filmes'}
               </h1>
               <p className="text-xs text-zinc-400 mt-1">
                 Escolha um título e confira as opções de áudio e legenda disponíveis.
@@ -493,7 +493,7 @@ export const App: React.FC = () => {
                 Nenhum título encontrado nesta seção
               </p>
               <p className="text-xs text-zinc-500 mb-6">
-                Tente outra busca, limpe os filtros ou sincronize seu catálogo.
+                Tente outro título, ator ou idioma. Você também pode limpar os filtros.
               </p>
               <button
                 onClick={() => {
@@ -502,8 +502,9 @@ export const App: React.FC = () => {
                 }}
                 className="bg-[#E50914] text-white text-sm font-bold px-6 py-2.5 rounded cursor-pointer touch-target tap-highlight"
               >
-                Voltar ao Início
+                Voltar ao início
               </button>
+              <button className="block mx-auto mt-3 underline text-sm" onClick={()=>{setFilters({genre:"",year:"",language:"",quality:"",sort:"recent"});setSearchQuery("");}}>Limpar busca e filtros</button>
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2.5 sm:gap-3 md:gap-4">
@@ -517,10 +518,9 @@ export const App: React.FC = () => {
                   >
                     <button
                       type="button"
-                      aria-label={`Assistir ${item.title}`}
-                      disabled={!f}
+                      aria-label={`Ver detalhes de ${item.title}`}
                       onFocus={() => prewarmStream(item)}
-                      onClick={() => void openPlayer(item)}
+                      onClick={() => void openDetails(item)}
                       className="relative aspect-[2/3] bg-zinc-900 cursor-pointer overflow-hidden tap-highlight"
                     >
                       <img
@@ -554,7 +554,7 @@ export const App: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => void openDetails(item)}
-                          className="media-card-title w-full text-left font-bold text-xs sm:text-sm text-white line-clamp-1 hover:text-[#E50914] cursor-pointer py-0.5 tap-highlight"
+                          className="media-card-title w-full text-left font-bold text-sm text-white line-clamp-2 hover:text-[#E50914] cursor-pointer py-0.5 tap-highlight"
                         >
                           {item.title}
                         </button>
@@ -673,43 +673,7 @@ export const App: React.FC = () => {
       )}
 
       {/* Netflix Style Footer */}
-      <footer className="border-t border-zinc-900 bg-[#141414] pt-8 pb-24 sm:py-10 px-4 md:px-12 text-xs text-zinc-500 safe-left safe-right safe-bottom">
-        <div className="max-w-[1800px] mx-auto flex flex-col md:flex-row items-start md:items-center justify-between gap-5 sm:gap-6">
-          <div className="space-y-1.5">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <span className="font-netflix-logo text-2xl text-[#E50914] tracking-wider">
-                MINATTOFLIX V2
-              </span>
-              <span className="hidden sm:inline text-zinc-600">•</span>
-              <span className="text-zinc-400 font-medium">
-                Streaming em Alta Definição • Dual Áudio 5.1 & Legendas
-              </span>
-            </div>
-            <p className="leading-relaxed">
-              Suporte completo a Dual Áudio (faixas embutidas no .MKV via EBML/Mediabunny ou arquivos separados)
-              e Legendas (.SRT / .VTT / .ASS).
-            </p>
-          </div>
-
-          <div className="hidden sm:flex sm:flex-row items-center gap-3 w-full md:w-auto">
-            <button
-              onClick={() => setShowCloudStudio(true)}
-              className="bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-200 px-4 py-2.5 rounded flex items-center justify-center gap-2 transition cursor-pointer touch-target tap-highlight"
-            >
-              <Cloud className="w-4 h-4 text-[#E50914] shrink-0" />
-              <span>Gerenciar Catálogo</span>
-            </button>
-            <button
-              onClick={() => void handleSyncCloudNow().catch(() => {})}
-              disabled={isSyncing}
-              className="bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-200 px-4 py-2.5 rounded flex items-center justify-center gap-2 transition cursor-pointer touch-target tap-highlight"
-            >
-              <RefreshCw className={`w-4 h-4 text-[#E50914] shrink-0 ${isSyncing ? 'animate-spin' : ''}`} />
-              <span>Sincronizar Catálogo</span>
-            </button>
-          </div>
-        </div>
-      </footer>
+      <footer className="px-4 py-8 pb-24 text-sm text-zinc-400 safe-bottom"><p className="max-w-[1800px] mx-auto">MinattoFlix · Sua biblioteca, do seu jeito.</p></footer>
 
       {errorBanner}
       {detailLoading && <div role="status" className="fixed bottom-20 sm:bottom-4 right-4 z-[60] bg-zinc-900 border border-zinc-700 rounded p-4 shadow-xl text-sm">Carregando detalhes… <button className="ml-3 underline" onClick={() => { detailRequestRef.current++; setDetailLoading(false); }}>Cancelar</button></div>}

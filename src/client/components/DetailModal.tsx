@@ -1,4 +1,6 @@
+import {Artwork} from './Artwork';
 import { prewarmStream, requestResponse } from '../services/catalog';
+import {useAccess} from '../hooks/useAccess';
 import { useDialog } from '../hooks/useDialog';
 import React, { useEffect, useState } from 'react';
 import {
@@ -33,13 +35,14 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
 }
 
-export const DetailModal: React.FC<DetailModalProps> = ({
+const DetailModalContent: React.FC<DetailModalProps> = ({
   item,
   onClose,
   onPlay,
   onToggleMyList,
   onRefreshCatalog,
 }) => {
+  const {admin}=useAccess();
   // Guard: Movie has no files available
   if (!item.files?.length) {
     return (
@@ -49,7 +52,7 @@ export const DetailModal: React.FC<DetailModalProps> = ({
           <h2 className="text-2xl font-bold text-white mb-2">Arquivo não disponível</h2>
           <p className="text-zinc-400 mb-6">
             Este título ainda não tem um arquivo de vídeo sincronizado.
-            <br />Execute a sincronização na nuvem ou verifique se o arquivo existe no Google Drive/OneDrive.
+            <br />Tente novamente mais tarde ou escolha outro filme.
           </p>
           <div className="flex gap-3 justify-center">
             <button
@@ -58,12 +61,12 @@ export const DetailModal: React.FC<DetailModalProps> = ({
             >
               Fechar
             </button>
-            <button
+            {admin && <button
               onClick={onRefreshCatalog}
               className="bg-zinc-800 text-white font-bold px-6 py-3 rounded cursor-pointer"
             >
-              Sincronizar Catálogo
-            </button>
+              Atualizar catálogo
+            </button>}
           </div>
         </div>
       </div>
@@ -281,7 +284,7 @@ export const DetailModal: React.FC<DetailModalProps> = ({
 
         {/* Top Hero Banner inside Modal */}
         <div className="relative min-h-[240px] sm:min-h-[288px] md:min-h-[384px] w-full bg-black overflow-hidden flex-shrink-0 flex flex-col justify-end">
-          <img
+          <Artwork
             src={item.backdrop_url || item.poster_url}
             alt={item.title}
             className="absolute inset-0 w-full h-full object-cover object-center"
@@ -300,7 +303,7 @@ export const DetailModal: React.FC<DetailModalProps> = ({
                 className="flex-1 sm:flex-initial flex items-center justify-center gap-2 bg-white hover:bg-zinc-200 text-black font-bold text-sm sm:text-base px-5 sm:px-6 py-2.5 rounded transition cursor-pointer touch-target tap-highlight"
               >
                 <Play className="w-5 h-5 fill-black shrink-0" />
-                <span>Assistir Agora</span>
+                <span>{item.progress && !item.progress.is_completed && item.progress.position_seconds>15 ? "Continuar" : "Assistir"}</span>
               </button>
 
               <button
@@ -320,7 +323,7 @@ export const DetailModal: React.FC<DetailModalProps> = ({
                 )}
               </button>
 
-              {primaryFile && (
+              {admin && primaryFile && (
                 <button
                   onClick={handleProbeMkv}
                   disabled={probing}
@@ -332,15 +335,7 @@ export const DetailModal: React.FC<DetailModalProps> = ({
                 </button>
               )}
 
-              <button
-                onClick={handleEnrichWithAi}
-                disabled={enrichingAi}
-                className="flex items-center gap-1.5 bg-purple-600/25 hover:bg-purple-600/40 border border-purple-500/60 text-purple-200 text-xs font-semibold px-3 py-2 rounded transition cursor-pointer touch-target-sm tap-highlight"
-                title="Enriquece sinopse e frase de impacto usando Cloudflare Workers AI (Llama 3.1)"
-              >
-                <Sparkles className={`w-4 h-4 text-purple-300 shrink-0 ${enrichingAi ? 'animate-spin' : ''}`} />
-                <span>{enrichingAi ? 'Gerando Sinopse IA...' : 'Curadoria IA'}</span>
-              </button>
+
             </div>
           </div>
         </div>
@@ -401,7 +396,7 @@ export const DetailModal: React.FC<DetailModalProps> = ({
                   <span className="text-zinc-200">{item.genres.map((g) => g.name).join(', ')}</span>
                 </div>
               )}
-              {primaryFile && (
+              {admin && primaryFile && (
                 <>
                   <div className="pt-2 border-t border-zinc-800">
                     <span className="text-zinc-500">Tamanho / Codec: </span>
@@ -417,9 +412,9 @@ export const DetailModal: React.FC<DetailModalProps> = ({
 
           {/* Multiple File Source Mirrors Switcher */}
           {item.files.length > 1 && (
-            <div className="bg-zinc-900/80 border border-zinc-800 rounded-lg p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <details className="bg-zinc-900/80 border border-zinc-800 rounded-lg p-4 text-sm"><summary className="cursor-pointer font-semibold">Versões disponíveis</summary><div className="flex flex-wrap items-center gap-3 pt-3">
               <span className="text-zinc-300 font-semibold flex items-center gap-1.5">
-                <HardDrive className="w-4 h-4 text-[#E50914]" /> Servidores / Espelhos Disponíveis ({item.files.length}):
+                <HardDrive className="w-4 h-4 text-[#E50914]" /> Versões ({item.files.length}):
               </span>
               <div className="flex flex-wrap items-center gap-2">
                 {item.files.map((f, idx) => (
@@ -432,13 +427,14 @@ export const DetailModal: React.FC<DetailModalProps> = ({
                         : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
                     }`}
                   >
-                    {f.provider === 'onedrive' ? 'OneDrive Direct' : 'Google Drive'} #{idx + 1} ({f.resolution})
+                    Versão {idx + 1} ({f.resolution})
                   </button>
                 ))}
               </div>
-            </div>
+            </div></details>
           )}
 
+          <details className="rounded-lg border border-zinc-800 p-4"><summary className="font-semibold cursor-pointer">Áudio e legendas</summary>
           {/* Dual Audio & Subtitles Configuration Section */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 pt-4 border-t border-zinc-800">
             {/* Left Column: Audio Tracks (Embedded MKV + Separate Files) */}
@@ -448,20 +444,20 @@ export const DetailModal: React.FC<DetailModalProps> = ({
                   <Languages className="w-5 h-5 text-[#E50914] shrink-0" />
                   <div className="min-w-0">
                     <h3 className="text-sm font-bold text-white">
-                      Faixas de Áudio (Dual Áudio / Separados)
+                      Idioma do áudio
                     </h3>
                     <p className="text-[11px] text-zinc-400">
-                      Faixas embutidas no .MKV ou arquivos de áudio/vídeo separados
+                      Escolha o idioma para assistir.
                     </p>
                   </div>
                 </div>
-                <button
+                {admin && <button
                   onClick={() => setShowAddAudio((s) => !s)}
                   className="text-xs text-[#E50914] hover:underline flex items-center gap-1 font-semibold cursor-pointer py-1 shrink-0"
                 >
                   <Link2 className="w-3.5 h-3.5" />
                   <span>+ Vincular Áudio</span>
-                </button>
+                </button>}
               </div>
 
               {showAddAudio && (
@@ -536,7 +532,7 @@ export const DetailModal: React.FC<DetailModalProps> = ({
                         <div className="flex items-center gap-2 truncate">
                           <span className="truncate">{track.label}</span>
                         </div>
-                        <span className="text-[10px] text-zinc-500 block truncate">
+                        <span className="hidden">
                           {track.source_type === 'embedded'
                             ? `Embutido no .MKV (Faixa #${track.track_index + 1} • ${track.codec} ${track.channels})`
                             : track.source_type === 'alternate_video'
@@ -559,23 +555,15 @@ export const DetailModal: React.FC<DetailModalProps> = ({
                   <div className="min-w-0">
                     <h3 className="text-sm font-bold text-white">Legendas Disponíveis ({visibleSubtitleTracks.length})</h3>
                     <p className="text-[11px] text-zinc-400">
-                      Embutidas no .MKV ou arquivos .SRT / .VTT / .ASS externos
+                      Escolha uma legenda ou assista sem legendas.
                     </p>
                   </div>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    onClick={handleAutoFetchSubtitles}
-                    disabled={fetchingOpenSubs}
-                    className="text-[11px] bg-emerald-600/25 hover:bg-emerald-600/40 border border-emerald-500/60 text-emerald-200 font-semibold px-2.5 py-1.5 rounded flex items-center gap-1 cursor-pointer"
-                    title="Busca legendas completas no OpenSubtitles/SubDL + Workers AI e armazena no Cloudflare R2"
-                  >
-                    <Sparkles className={`w-3 h-3 shrink-0 ${fetchingOpenSubs ? 'animate-spin' : ''}`} />
-                    <span>{fetchingOpenSubs ? 'Buscando R2...' : 'OpenSubtitles R2'}</span>
-                  </button>
 
-                  <label className="text-xs text-[#E50914] hover:underline flex items-center gap-1 font-semibold cursor-pointer py-1">
+
+                  {admin && <label className="text-xs text-[#E50914] hover:underline flex items-center gap-1 font-semibold cursor-pointer py-1">
                     <Upload className="w-3.5 h-3.5 shrink-0" />
                     <span>+ .SRT/.VTT</span>
                     <input
@@ -584,7 +572,7 @@ export const DetailModal: React.FC<DetailModalProps> = ({
                       onChange={handleUploadSubtitleFile}
                       className="hidden"
                     />
-                  </label>
+                  </label>}
                 </div>
               </div>
 
@@ -615,7 +603,7 @@ export const DetailModal: React.FC<DetailModalProps> = ({
                     >
                       <div>
                         <div>{sub.label}</div>
-                        <span className="text-[10px] text-zinc-500">
+                        <span className="hidden">
                           {sub.source_type === 'embedded'
                             ? `Legenda do container (${sub.format.toUpperCase()})`
                             : `WebVTT em Cache (Cloudflare R2 + Neon)`}
@@ -629,14 +617,15 @@ export const DetailModal: React.FC<DetailModalProps> = ({
             </div>
           </div>
 
+          </details>
           {/* Netflix Authentic Seasons & Episodes Section */}
           {item.seasons && item.seasons.length > 0 && (
             <div className="pt-6 border-t border-zinc-800 space-y-5">
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div>
-                  <h3 className="text-xl font-bold text-white">Episódios & Capítulos</h3>
+                  <h3 className="text-xl font-bold text-white">Episódios</h3>
                   <p className="text-xs text-zinc-400">
-                    Selecione um episódio para assistir com Dual Áudio 5.1 (WASM AC3/EAC3) e Legendas R2
+                    Escolha um episódio para começar ou continuar.
                   </p>
                 </div>
 
@@ -674,7 +663,7 @@ export const DetailModal: React.FC<DetailModalProps> = ({
                     </div>
 
                     <div className="relative w-full sm:w-40 aspect-video rounded overflow-hidden bg-zinc-900 shrink-0 border border-zinc-800">
-                      <img
+                      <Artwork
                         src={ep.still_url || item.backdrop_url || item.poster_url}
                         alt={ep.title}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
@@ -709,3 +698,9 @@ export const DetailModal: React.FC<DetailModalProps> = ({
     </div>
   );
 };
+
+function UnavailableTitle({onClose}: {onClose:()=>void}) {
+ const dialog=useDialog(onClose);
+ return <div ref={dialog} role="dialog" aria-modal="true" aria-label="Arquivo não disponível" tabIndex={-1} className="fixed inset-0 z-[70] bg-black/95 flex items-center justify-center p-6"><div className="text-center max-w-md space-y-4"><h2 className="text-2xl font-bold">Arquivo não disponível</h2><p className="text-zinc-300">Este título ainda não pode ser reproduzido. Escolha outro filme ou tente novamente mais tarde.</p><button className="bg-white text-black rounded-lg px-5 py-3" onClick={onClose}>Voltar ao catálogo</button></div></div>;
+}
+export const DetailModal:React.FC<DetailModalProps>=props=>props.item.files?.length?<DetailModalContent key={props.item.id} {...props}/>:<UnavailableTitle onClose={props.onClose}/>;

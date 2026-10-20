@@ -1262,13 +1262,15 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
   // Mouse and pointer movements immediately reveal controls and cursor (YouTube behavior)
   useEffect(() => {
     const onActivity = () => {
+      if(isMobile||nativeIos)return;
       resetControlsTimer();
     };
     window.addEventListener('mousemove', onActivity, { passive: true });
-    window.addEventListener('pointermove', onActivity, { passive: true });
+    const onPointerActivity=(event:PointerEvent)=>{if(event.pointerType==='mouse')onActivity();};
+    window.addEventListener('pointermove', onPointerActivity, { passive: true });
     return () => {
       window.removeEventListener('mousemove', onActivity);
-      window.removeEventListener('pointermove', onActivity);
+      window.removeEventListener('pointermove', onPointerActivity);
     };
   }, [resetControlsTimer]);
 
@@ -1636,7 +1638,11 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
   const handleVideoClick = () => {
     if (showAudioSubMenu) { setShowAudioSubMenu(false); return; }
     if (showWatchParty) { setShowWatchParty(false); return; }
-    if (isMobile && playing) { resetControlsTimer(); return; }
+    if (isMobile || nativeIos) {
+      if (controlsTimerRef.current) window.clearTimeout(controlsTimerRef.current);
+      setShowControls(visible => !visible);
+      return;
+    }
 
     if (!isMobile) {
       if (clickTimeoutRef.current) {
@@ -1663,86 +1669,6 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
     }
     void toggleFullscreen();
   };
-
-  // Touch Gestures: Double-tap seek, Swipe volume/brightness
-  useEffect(() => {
-    if (!isMobile || !isFullscreen) return;
-    
-    let touchStartX = 0;
-    let touchStartY = 0;
-    let touchStartTime = 0;
-    let lastTapTime = 0;
-    let touchStartVolume = volume;
-    let touchStartBrightness = 1;
-    
-    const handleTouchStart = (e: TouchEvent) => {
-      const touch = e.touches[0];
-      touchStartX = touch.clientX;
-      touchStartY = touch.clientY;
-      touchStartTime = Date.now();
-      touchStartVolume = volume;
-      
-      // Double-tap detection
-      if (touchStartTime - lastTapTime < 300) {
-        const videoWidth = window.innerWidth;
-        if (touchStartX < videoWidth / 2) {
-          skipSeconds(-10); // Left side: rewind 10s
-        } else {
-          skipSeconds(10);  // Right side: forward 10s
-        }
-        lastTapTime = 0; // Reset to prevent triple-tap
-        e.preventDefault();
-        return;
-      }
-      lastTapTime = touchStartTime;
-    };
-    
-    const handleTouchMove = (e: TouchEvent) => {
-      if (e.touches.length !== 1) return;
-      const touch = e.touches[0];
-      const deltaX = touch.clientX - touchStartX;
-      const deltaY = touchStartY - touch.clientY; // Inverted: up = positive
-      const videoWidth = window.innerWidth;
-      const videoHeight = window.innerHeight;
-      
-      // Right side swipe: volume
-      if (touchStartX > videoWidth * 0.6) {
-        const volumeDelta = deltaY / videoHeight;
-        const newVolume = Math.max(0, Math.min(1, touchStartVolume + volumeDelta));
-        handleVolumeSlider(newVolume);
-        e.preventDefault();
-      }
-      // Left side swipe: brightness (CSS filter)
-      else if (touchStartX < videoWidth * 0.4) {
-        const brightnessDelta = deltaY / videoHeight * 2;
-        touchStartBrightness = Math.max(0.3, Math.min(2, touchStartBrightness + brightnessDelta));
-        const videoEl = useWebCodecsCanvas ? canvasRef.current : videoRef.current;
-        if (videoEl) {
-          videoEl.style.filter = `brightness(${touchStartBrightness})`;
-        }
-        e.preventDefault();
-      }
-    };
-    
-    const handleTouchEnd = () => {
-      // Reset brightness on touch end (optional: keep last value)
-      // touchStartBrightness = 1;
-    };
-    
-    const container = containerRef.current;
-    container?.addEventListener('touchstart', handleTouchStart, { passive: false });
-    container?.addEventListener('touchmove', handleTouchMove, { passive: false });
-    container?.addEventListener('touchend', handleTouchEnd, { passive: false });
-    
-    return () => {
-      container?.removeEventListener('touchstart', handleTouchStart);
-      container?.removeEventListener('touchmove', handleTouchMove);
-      container?.removeEventListener('touchend', handleTouchEnd);
-    };
-  }, [isMobile, isFullscreen, volume, useWebCodecsCanvas, skipSeconds, handleVolumeSlider]);
-
-
-
 
   const togglePip = async () => {
     if (!videoRef.current) return;
@@ -1991,7 +1917,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
 
   const activeAudioObj = item.audioTracks.find((a) => a.id === activeAudioId) || item.audioTracks[0];
   const activeSubObj = item.subtitleTracks.find((s) => s.id === activeSubtitleId);
-  const controlsVisible = showControls || !playing || showAudioSubMenu || showWatchParty || showShortcutsHelp || showQualityDashboard || showQualityMenu;
+  const controlsVisible = showControls || showAudioSubMenu || showWatchParty || showShortcutsHelp || showQualityDashboard || showQualityMenu;
   const hideCursor = !controlsVisible;
   const isCover = videoFitMode === 'cover';
   const videoFitClass = isCover ? 'object-cover' : 'object-contain';
@@ -2001,16 +1927,16 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
       <div
         ref={containerRef}
         role="dialog" aria-modal="true" aria-label={`Reproduzindo ${item.title}`} tabIndex={-1}
-        onMouseMove={resetControlsTimer}
-        onPointerMove={resetControlsTimer}
-        onMouseEnter={resetControlsTimer}
+        onMouseMove={()=>{if(!isMobile&&!nativeIos)resetControlsTimer();}}
+        onPointerMove={event=>{if(event.pointerType==='mouse'&&!isMobile&&!nativeIos)resetControlsTimer();}}
+        onMouseEnter={()=>{if(!isMobile&&!nativeIos)resetControlsTimer();}}
         onTouchStart={() => {
           audioControllerRef.current?.resumeAudioContext();
-          resetControlsTimer();
         }}
         className={`player-shell fixed inset-0 w-full h-full bg-black flex flex-col justify-between select-none overflow-hidden ${hideCursor ? 'hide-cursor cursor-none' : ''} ${expandedPlayer ? 'player-landscape z-[100]' : 'z-50'}`}
       >
       {fullscreenError && <div role="status" className="absolute top-20 left-4 right-4 z-[60] rounded bg-black/90 p-3 text-center text-sm text-white">{fullscreenError}</div>}
+      {streamError && <div role="alert" className="absolute inset-0 z-[80] bg-black/95 flex items-center justify-center p-6"><div className="max-w-md text-center space-y-4"><h2 className="text-xl font-bold">Não foi possível reproduzir este filme</h2><p className="text-zinc-300">Confira sua conexão e tente novamente. Se o problema continuar, escolha outra versão do filme.</p><button className="bg-white text-black rounded-lg px-5 py-3 font-semibold" onClick={handleRetryStream}>Tentar novamente</button>{item.files.filter(file=>file.id!==selectedFile?.id).map((file,index)=><button key={file.id} className="block w-full rounded-lg bg-zinc-800 p-3" onClick={()=>{setSelectedFile(file);setStreamError(null);setIsBuffering(true);}}>Tentar versão {index+1}</button>)}<button className="block w-full p-3" onClick={handleExitPlayer}>Voltar ao catálogo</button><details className="text-sm text-zinc-400"><summary>Detalhes do problema</summary><p className="mt-2 break-words">{streamError}</p></details></div></div>}
 
       {/* On-Screen Display (OSD) feedback badge */}
       {osdMessage && (
@@ -2035,8 +1961,8 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
         <>
           <canvas
             ref={canvasRef}
-            onMouseMove={resetControlsTimer}
-            onPointerMove={resetControlsTimer}
+            onMouseMove={()=>{if(!isMobile&&!nativeIos)resetControlsTimer();}}
+            onPointerMove={event=>{if(event.pointerType==='mouse'&&!isMobile&&!nativeIos)resetControlsTimer();}}
             onClick={handleVideoClick}
             onDoubleClick={handleVideoDoubleClick}
             className={`absolute inset-0 w-full h-full ${videoFitClass} bg-black ${hideCursor ? 'cursor-none' : 'cursor-pointer'} ${
@@ -2050,8 +1976,8 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
             autoPlay={!useWebCodecsCanvas && (nativeIos || !isIosWebKit())}
             playsInline
             crossOrigin="anonymous"
-            onMouseMove={resetControlsTimer}
-            onPointerMove={resetControlsTimer}
+            onMouseMove={()=>{if(!isMobile&&!nativeIos)resetControlsTimer();}}
+            onPointerMove={event=>{if(event.pointerType==='mouse'&&!isMobile&&!nativeIos)resetControlsTimer();}}
             onClick={handleVideoClick}
             onDoubleClick={handleVideoDoubleClick}
             onPlay={() => {
@@ -2361,112 +2287,15 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
         </div>
       )}
 
-      {/* Netflix Authentic Pause Screen Overlay ("Você está assistindo...") */}
-      {!playing && !isBuffering && !showAudioSubMenu && !showWatchParty && !streamError && (
-        <div
-          onClick={togglePlay}
-          className="player-pause-overlay absolute inset-0 bg-black/55 z-20 flex flex-col justify-center px-4 sm:px-12 md:px-16 lg:px-20 py-16 cursor-pointer animate-fadeIn safe-top safe-bottom safe-left safe-right"
-        >
-          <div className="player-pause-content max-w-xl space-y-2 sm:space-y-3">
-            <span className="text-[10px] sm:text-xs font-bold tracking-widest uppercase text-zinc-400">
-              Você está assistindo
-            </span>
-            <h2 className="font-netflix-logo text-2xl sm:text-4xl md:text-6xl text-white tracking-wide line-clamp-2">
-              {item.title}
-            </h2>
-            <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-zinc-300">
-              <span className="text-[#46D369]">Nota {item.rating.toFixed(1)}/10</span>
-              <span>{item.release_year}</span>
-              <span className="px-1.5 py-0.5 bg-zinc-800 border border-zinc-600 rounded">
-                {item.age_rating === 'L' ? 'LIVRE' : `${item.age_rating}+`}
-              </span>
-              <span>{selectedFile?.resolution || '1080p'}</span>
-            </div>
-            {item.tagline && (
-              <p className="hidden sm:block text-sm italic text-zinc-200 font-medium">"{item.tagline}"</p>
-            )}
-            <p className="text-xs md:text-sm text-zinc-300 line-clamp-2 sm:line-clamp-3 leading-relaxed">
-              {item.overview}
-            </p>
-
-            {/* Quick Action Buttons on Pause Screen */}
-            <div
-              onClick={(e) => e.stopPropagation()}
-              className="player-pause-actions pt-3 sm:pt-4 flex flex-wrap items-center gap-2 sm:gap-3"
-            >
-              <button
-                type="button"
-                onClick={togglePlay}
-                className="flex items-center gap-2 bg-white hover:bg-zinc-200 text-black font-bold text-xs sm:text-sm px-4 sm:px-5 py-2.5 rounded shadow-lg transition cursor-pointer touch-target-sm tap-highlight"
-              >
-                <Play className="w-4 h-4 fill-black shrink-0" />
-                <span>Continuar</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={restartPlayback}
-                className="flex items-center gap-2 bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-600 text-white font-semibold text-xs sm:text-sm px-4 sm:px-5 py-2.5 rounded transition cursor-pointer touch-target-sm tap-highlight"
-              >
-                <SkipBack className="w-4 h-4 shrink-0" />
-                <span>Iniciar do começo</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={toggleFullscreen}
-                className="flex items-center gap-2 bg-[#E50914] hover:bg-[#b80710] text-white font-bold text-xs sm:text-sm px-4 sm:px-5 py-2.5 rounded shadow-lg transition cursor-pointer touch-target-sm tap-highlight"
-              >
-                {isFullscreen ? (
-                  <>
-                    <Minimize className="w-4 h-4 shrink-0" />
-                    <span>Sair da Tela Cheia</span>
-                  </>
-                ) : (
-                  <>
-                    <Maximize className="w-4 h-4 shrink-0" />
-                    <span>Tela Cheia</span>
-                  </>
-                )}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => skipSeconds(-10)}
-                className="flex items-center gap-1.5 bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-600 text-white font-semibold text-xs sm:text-sm px-3.5 py-2.5 rounded transition cursor-pointer touch-target-sm tap-highlight"
-              >
-                <RotateCcw className="w-4 h-4 shrink-0" />
-                <span>-10s</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => skipSeconds(10)}
-                className="flex items-center gap-1.5 bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-600 text-white font-semibold text-xs sm:text-sm px-3.5 py-2.5 rounded transition cursor-pointer touch-target-sm tap-highlight"
-              >
-                <RotateCw className="w-4 h-4 shrink-0" />
-                <span>+10s</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setShowAudioSubMenu(true);
-                  setShowWatchParty(false);
-                }}
-                className="flex items-center gap-1.5 bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-600 text-white font-semibold text-xs sm:text-sm px-3.5 py-2.5 rounded transition cursor-pointer touch-target-sm tap-highlight"
-              >
-                <Languages className="w-4 h-4 shrink-0" />
-                <span>Áudio e Legendas</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {controlsVisible && !isBuffering && !streamError && <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center gap-8">
+        <button aria-label="Voltar dez segundos" onClick={()=>skipSeconds(-10)} className="pointer-events-auto rounded-full bg-black/50 w-14 h-14 flex items-center justify-center"><RotateCcw size={28}/><span className="sr-only">Voltar 10 segundos</span></button>
+        <button aria-label={playing?'Pausar':'Reproduzir'} onClick={togglePlay} className="pointer-events-auto rounded-full bg-black/50 w-20 h-20 flex items-center justify-center">{playing?<Pause size={40}/>:<Play size={40}/>}</button>
+        <button aria-label="Avançar dez segundos" onClick={()=>skipSeconds(10)} className="pointer-events-auto rounded-full bg-black/50 w-14 h-14 flex items-center justify-center"><RotateCw size={28}/></button>
+      </div>}
 
       {/* Netflix Red Loading Spinner */}
       {isBuffering && effectiveStreamUrl && !streamError && (
-        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center bg-black/30 z-20 px-4 text-center safe-top safe-bottom">
+        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center z-20 px-4 text-center safe-top safe-bottom">
           <div className="w-12 h-12 sm:w-16 sm:h-16 border-4 border-[#E50914] border-t-transparent rounded-full animate-spin" />
           <span className="mt-3 text-[11px] sm:text-xs font-semibold tracking-wider text-zinc-300 uppercase">
             Carregando transmissão em alta definição...
@@ -2478,11 +2307,11 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
       <div
         onPointerEnter={(event) => {
           isHoveringControlsRef.current = event.pointerType === 'mouse' && !isMobile;
-          setShowControls(true);
+          if(event.pointerType==='mouse'&&!isMobile&&!nativeIos)setShowControls(true);
         }}
         onPointerLeave={() => {
           isHoveringControlsRef.current = false;
-          resetControlsTimer();
+          if(!isMobile&&!nativeIos)resetControlsTimer();
         }}
         className={`player-top-bar absolute top-0 inset-x-0 z-30 bg-gradient-to-b from-black/90 via-black/40 to-transparent p-3 sm:p-4 md:p-8 flex items-center justify-between gap-2 sm:gap-4 transition-opacity duration-300 safe-top safe-left safe-right ${
           controlsVisible ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
@@ -2813,15 +2642,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
                   <h3 className="text-sm sm:text-base font-bold text-white">Legendas</h3>
                   <div className="flex items-center gap-1.5">
-                    <button
-                      onClick={handleAiTranslateSubtitle}
-                      disabled={aiGeneratingSub}
-                      className="text-[11px] bg-purple-600/30 hover:bg-purple-600/50 border border-purple-500 text-purple-200 font-semibold px-2.5 py-1 rounded flex items-center gap-1 cursor-pointer"
-                      title="Gera ou traduz legenda para Português (Brasil) usando Cloudflare Workers AI e salva no R2"
-                    >
-                      <Sparkles className={`w-3 h-3 ${aiGeneratingSub ? 'animate-spin' : ''}`} />
-                      <span>{aiGeneratingSub ? 'Traduzindo IA...' : 'Legenda IA'}</span>
-                    </button>
+
 
                     <label className="text-[11px] bg-[#E50914] hover:bg-[#b80710] text-white font-semibold px-2.5 py-1 rounded flex items-center gap-1 cursor-pointer">
                       <Upload className="w-3 h-3" />
@@ -2968,11 +2789,11 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
       <div
         onPointerEnter={(event) => {
           isHoveringControlsRef.current = event.pointerType === 'mouse' && !isMobile;
-          setShowControls(true);
+          if(event.pointerType==='mouse'&&!isMobile&&!nativeIos)setShowControls(true);
         }}
         onPointerLeave={() => {
           isHoveringControlsRef.current = false;
-          resetControlsTimer();
+          if(!isMobile&&!nativeIos)resetControlsTimer();
         }}
         className={`player-bottom-bar absolute bottom-0 inset-x-0 z-30 bg-gradient-to-t from-black/95 via-black/75 to-transparent px-3 sm:px-4 md:px-10 pt-6 sm:pt-8 pb-4 sm:pb-5 transition-opacity duration-300 safe-bottom safe-left safe-right ${
           controlsVisible ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
@@ -3018,7 +2839,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
           <div className="player-primary-actions flex items-center gap-1 sm:gap-4 md:gap-6">
             <button
               onClick={togglePlay}
-              className="text-white hover:text-[#E50914] flex items-center justify-center transition cursor-pointer touch-target-sm sm:touch-target tap-highlight"
+              className="hidden sm:flex text-white hover:text-[#E50914] items-center justify-center transition cursor-pointer touch-target-sm sm:touch-target tap-highlight"
               title={playing ? 'Pausar (Espaço)' : 'Reproduzir (Espaço)'}
             >
               {playing ? <Pause className="w-6 h-6 sm:w-7 sm:h-7 fill-white" /> : <Play className="w-6 h-6 sm:w-7 sm:h-7 fill-white" />}

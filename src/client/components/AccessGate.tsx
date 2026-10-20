@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { apiUrl, saveSession } from '../services/catalog';
+import {AccessContext} from '../hooks/useAccess';
 
 export function AccessGate({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
+  const [admin,setAdmin]=useState(false);
   const [checking, setChecking] = useState(true);
   const [configured, setConfigured] = useState(true);
   const [code, setCode] = useState('');
@@ -15,7 +17,7 @@ export function AccessGate({ children }: { children: React.ReactNode }) {
         const response = await fetch(apiUrl('/api/session'));
         if (!response.ok) throw new Error('Não foi possível verificar o acesso.');
         const state = await response.json();
-        if (active) { setConfigured(state.configured); setReady(state.authenticated); }
+        if (active) { setConfigured(state.configured); setReady(state.authenticated); setAdmin(state.role==='admin'); }
       } catch { if (active) setError('Sem conexão com o servidor. Tente novamente.'); }
       finally { if (active) setChecking(false); }
     };
@@ -25,7 +27,7 @@ export function AccessGate({ children }: { children: React.ReactNode }) {
     return () => { active = false; window.removeEventListener('minatto-session-expired', expired); };
   }, []);
 
-  if (ready) return <>{children}<button className="fixed bottom-3 left-3 z-[70] rounded bg-zinc-900/90 px-3 py-2 text-xs text-zinc-300" onClick={() => { saveSession(''); setReady(false); }}>Sair do acesso</button></>;
+  if (ready) return <AccessContext.Provider value={{admin}}>{children}</AccessContext.Provider>;
   return <main className="min-h-screen bg-[#141414] text-white flex items-center justify-center p-6 safe-top safe-bottom">
     <form className="w-full max-w-sm space-y-5" onSubmit={async event => {
       event.preventDefault(); setBusy(true); setError('');
@@ -33,7 +35,7 @@ export function AccessGate({ children }: { children: React.ReactNode }) {
         const response = await fetch(apiUrl('/api/session'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) });
         const result = await response.json();
         if (!response.ok) throw new Error(result.error || 'Não foi possível entrar.');
-        saveSession(result.token); setCode(''); setReady(true);
+        saveSession(result.token); setAdmin(result.role==='admin'); setCode(''); setReady(true);
       } catch (err) { setError(err instanceof Error ? err.message : 'Não foi possível entrar.'); }
       finally { setBusy(false); }
     }}>
