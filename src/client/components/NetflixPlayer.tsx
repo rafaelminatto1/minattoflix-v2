@@ -1,4 +1,5 @@
 import { isPlayerFullscreen, togglePlayerFullscreen, enterPlayerFullscreen, exitPlayerFullscreen, type FullscreenVideo } from '../services/fullscreen';
+import { Capacitor } from '@capacitor/core';
 import { apiUrl, requestResponse } from '../services/catalog';
 import { RoomTransport } from '../services/roomTransport';
 import { createPlayerMetrics } from '../services/playerMetrics';
@@ -259,7 +260,8 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
     );
   });
 
-  const [playing, setPlaying] = useState(() => !isIosWebKit());
+  const nativeIos = Capacitor.getPlatform() === 'ios';
+  const [playing, setPlaying] = useState(() => nativeIos || !isIosWebKit());
   const [currentTime, setCurrentTime] = useState(item.progress?.is_completed ? 0 : item.progress?.position_seconds || 0);
   const [duration, setDuration] = useState(item.progress?.duration_seconds || item.runtime_minutes * 60);
   const [bufferedEnd, setBufferedEnd] = useState(0);
@@ -271,7 +273,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
   const [fullscreenError, setFullscreenError] = useState('');
   const [introDismissed, setIntroDismissed] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
-  const [showControls, setShowControls] = useState(true);
+  const [showControls, setShowControls] = useState(!nativeIos);
   const [isBuffering, setIsBuffering] = useState(true);
   const [streamError, setStreamError] = useState<string | null>(null);
 
@@ -740,7 +742,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
         clearLoadTimer();
         setIsBuffering(false);
         setStreamError(null);
-        setShowControls(true);
+        setShowControls(!nativeIos);
         // On desktop/Android, auto-fullscreen when ready; on iOS, wait for user play tap to preserve gesture
         if (!isFullscreen && !isIosWebKit()) {
           void enterFullscreen();
@@ -769,8 +771,8 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
     setIsBuffering(true);
     setStreamError(null);
     armLoadTimer();
-    void player.open(effectiveStreamUrl, startAt, !isIosWebKit());
-    if (isIosWebKit()) setPlaying(false);
+    void player.open(effectiveStreamUrl, startAt, nativeIos || !isIosWebKit());
+    if (isIosWebKit() && !nativeIos) setPlaying(false);
 
     return () => {
       active = false;
@@ -1250,6 +1252,8 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
       if (controlsTimerRef.current) {
         window.clearTimeout(controlsTimerRef.current);
       }
+    } else if (nativeIos) {
+      setShowControls(false);
     } else {
       resetControlsTimer();
     }
@@ -2043,7 +2047,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
             ref={videoRef}
             src={useWebCodecsCanvas || shouldUseHls ? undefined : effectiveStreamUrl}
             preload="auto"
-            autoPlay={!useWebCodecsCanvas && !isIosWebKit()}
+            autoPlay={!useWebCodecsCanvas && (nativeIos || !isIosWebKit())}
             playsInline
             crossOrigin="anonymous"
             onMouseMove={resetControlsTimer}
@@ -2072,7 +2076,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
                 v.currentTime = item.progress.position_seconds;
               }
               setIsBuffering(false);
-              if (v.paused && !isIosWebKit()) {
+              if (v.paused && (nativeIos || !isIosWebKit())) {
                 v.play().catch(() => { setPlaying(false); setShowControls(true); });
               }
               // Auto-fullscreen em computadores e celulares quando o vídeo inicia

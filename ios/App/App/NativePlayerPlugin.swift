@@ -2,6 +2,11 @@ import AVKit
 import Capacitor
 
 class MinattoBridgeViewController: CAPBridgeViewController {
+    var immersive = false {
+        didSet { setNeedsStatusBarAppearanceUpdate(); setNeedsUpdateOfHomeIndicatorAutoHidden() }
+    }
+    override var prefersStatusBarHidden: Bool { immersive }
+    override var prefersHomeIndicatorAutoHidden: Bool { immersive }
     override func capacitorDidLoad() {
         bridge?.registerPluginInstance(NativePlayerPlugin())
     }
@@ -9,8 +14,93 @@ class MinattoBridgeViewController: CAPBridgeViewController {
 
 private class MovieViewController: AVPlayerViewController {
     var onClose: (() -> Void)?
+    override var prefersStatusBarHidden: Bool { true }
+    override var prefersHomeIndicatorAutoHidden: Bool { true }
+    private let controls = UIStackView()
+    private let seekBar = UISlider()
+    private let playButton = UIButton(type: .system)
+    private var hideTimer: Timer?
+    private var progressTimer: Timer?
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        let tap = UITapGestureRecognizer(target: self, action: #selector(toggleControls))
+        tap.cancelsTouchesInView = false
+        view.addGestureRecognizer(tap)
+        controls.axis = .vertical; controls.spacing = 16
+        controls.backgroundColor = UIColor.black.withAlphaComponent(0.7)
+        controls.isLayoutMarginsRelativeArrangement = true
+        controls.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16)
+        let row = UIStackView(); row.distribution = .fillEqually
+        let close = button("Voltar", action: #selector(closeMovie))
+        let back = button("−10 s", action: #selector(skipBack))
+        playButton.setTitle("Pausar", for: .normal)
+        playButton.addTarget(self, action: #selector(togglePlayback), for: .touchUpInside)
+        [close, back, playButton, button("+10 s", action: #selector(skipForward)), trackMenu()].forEach { row.addArrangedSubview($0) }
+        seekBar.addTarget(self, action: #selector(seekChanged), for: .valueChanged)
+        controls.addArrangedSubview(row); controls.addArrangedSubview(seekBar)
+        controls.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(controls)
+        NSLayoutConstraint.activate([
+            controls.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 12),
+            controls.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12),
+            controls.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
+            row.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
+        ])
+        controls.isHidden = true
+        progressTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self = self, let player = self.player else { return }
+            let duration = player.currentItem?.duration.seconds ?? 0
+            if duration.isFinite && duration > 0 && !self.seekBar.isTracking {
+                self.seekBar.value = Float(player.currentTime().seconds / duration)
+            }
+            self.playButton.setTitle(player.rate == 0 ? "Reproduzir" : "Pausar", for: .normal)
+        }
+    }
+    private func button(_ title: String, action: Selector) -> UIButton {
+        let button = UIButton(type: .system); button.setTitle(title, for: .normal)
+        button.addTarget(self, action: action, for: .touchUpInside); return button
+    }
+    private func trackMenu() -> UIButton {
+        let button = UIButton(type: .system); button.setTitle("Áudio/legendas", for: .normal)
+        button.showsMenuAsPrimaryAction = true
+        button.menu = UIMenu(children: [UIDeferredMenuElement.uncached { [weak self] completion in
+            guard let item = self?.player?.currentItem else { completion([]); return }
+            var menus: [UIMenuElement] = []
+            for characteristic in [AVMediaCharacteristic.audible, .legible] {
+                guard let group = item.asset.mediaSelectionGroup(forMediaCharacteristic: characteristic) else { continue }
+                var actions = group.options.map { option in
+                    UIAction(title: option.displayName) { _ in item.select(option, in: group) }
+                }
+                if characteristic == .legible { actions.insert(UIAction(title: "Desativar legendas") { _ in item.select(nil, in: group) }, at: 0) }
+                menus.append(UIMenu(title: characteristic == .audible ? "Áudio" : "Legendas", children: actions))
+            }
+            completion(menus)
+        }])
+        return button
+    }
+    @objc private func toggleControls(_ gesture: UITapGestureRecognizer) {
+        if controls.bounds.contains(gesture.location(in: controls)) && !controls.isHidden { return }
+        controls.isHidden.toggle(); hideTimer?.invalidate()
+        if !controls.isHidden { hideTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in self?.controls.isHidden = true } }
+    }
+    @objc private func closeMovie() { dismiss(animated: true) }
+    @objc private func togglePlayback() { if player?.rate == 0 { player?.play() } else { player?.pause() } }
+    @objc private func skipBack() { skip(-10) }
+    @objc private func skipForward() { skip(10) }
+    private func skip(_ seconds: Double) {
+        guard let player = player else { return }
+        let duration = player.currentItem?.duration.seconds ?? 0
+        let target = max(0, player.currentTime().seconds + seconds)
+        player.seek(to: CMTime(seconds: duration.isFinite && duration > 0 ? min(target, duration) : target, preferredTimescale: 600))
+    }
+    @objc private func seekChanged() {
+        guard let duration = player?.currentItem?.duration.seconds, duration.isFinite else { return }
+        player?.seek(to: CMTime(seconds: Double(seekBar.value) * duration, preferredTimescale: 600))
+    }
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
+        hideTimer?.invalidate(); progressTimer?.invalidate()
         if isBeingDismissed || presentingViewController == nil { onClose?() }
     }
 }
@@ -19,7 +109,13 @@ private class MovieViewController: AVPlayerViewController {
 public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "NativePlayerPlugin"
     public let jsName = "NativePlayer"
-    public let pluginMethods: [CAPPluginMethod] = [CAPPluginMethod(name: "play", returnType: CAPPluginReturnPromise)]
+    public let pluginMethods: [CAPPluginMethod] = [CAPPluginMethod(name: "play", returnType: CAPPluginReturnPromise), CAPPluginMethod(name: "setImmersive", returnType: CAPPluginReturnPromise)]
+    @objc func setImmersive(_ call: CAPPluginCall) {
+        DispatchQueue.main.async { [weak self] in
+            (self?.bridge?.viewController as? MinattoBridgeViewController)?.immersive = call.getBool("enabled") ?? false
+            call.resolve()
+        }
+    }
     private var activeCall: CAPPluginCall?
     private var controller: MovieViewController?
     private var player: AVPlayer?
@@ -51,7 +147,7 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin {
             let controller = MovieViewController()
             controller.player = player
             controller.videoGravity = .resizeAspect
-            controller.showsPlaybackControls = true
+            controller.showsPlaybackControls = false
             controller.allowsPictureInPicturePlayback = false
             controller.modalPresentationStyle = .fullScreen
             controller.onClose = { [weak self] in self?.finish() }

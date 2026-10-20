@@ -5,7 +5,7 @@ import { Navbar, type NavSection } from './components/Navbar';
 import { HeroBillboard } from './components/HeroBillboard';
 import { MediaRow } from './components/MediaRow';
 import { NetflixPlayer } from './components/NetflixPlayer';
-import {Capacitor} from '@capacitor/core';
+import {Capacitor, registerPlugin} from '@capacitor/core';
 const NativePlayback=lazy(()=>import('./components/NativePlayback').then(module=>({default:module.NativePlayback})));
 const DetailModal = lazy(() => import('./components/DetailModal').then(module => ({ default: module.DetailModal })));
 const CloudManagerModal = lazy(() => import('./components/CloudManagerModal').then(module => ({ default: module.CloudManagerModal })));
@@ -46,6 +46,13 @@ export const App: React.FC = () => {
     webFallback?: boolean;
   } | null>(null);
   const [showCloudStudio, setShowCloudStudio] = useState<boolean>(false);
+  const playbackOpen = Boolean(playerState);
+  useEffect(() => {
+    if (Capacitor.getPlatform() !== 'ios') return;
+    const shell = registerPlugin<{setImmersive(options:{enabled:boolean}):Promise<void>}>('NativePlayer');
+    void shell.setImmersive({enabled:playbackOpen}).catch(()=>{});
+    return () => { void shell.setImmersive({enabled:false}).catch(()=>{}); };
+  }, [playbackOpen]);
 
   // Mobile-specific state
   const [isMobile, setIsMobile] = useState(false);
