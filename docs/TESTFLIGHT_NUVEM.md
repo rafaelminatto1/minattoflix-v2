@@ -68,3 +68,13 @@ Referências:
 - Removida essa atribuição incompatível do YAML para os próximos envios. Para o grupo interno, habilitar distribuição automática ou adicionar o build pela interface Apple.
 - Workers + Neon permanece restrito: processamento GitHub, R2 e IA desativados. A preparação de vídeos é local. Sincronismo, interrupções e reprodução precisam de teste físico no iPhone.
 
+## Reprodução direta e imersiva — 20/10/2026
+
+- Build `1.0 (6)`, commit `da7f86e9e4e8793ad461b9b3d4e86f70c62eaf15`: https://codemagic.io/app/6ad6cdb86a483b360aff08eb/build/6ad7ddba454d2506f7ab9b24
+- Arquivos sem versão nativa compatível passam automaticamente ao player alternativo. Falhas de abertura nativa também tentam o alternativo; essa troca não converte codecs incompatíveis.
+- No app iOS, o player alternativo tenta reprodução automática, com controles inicialmente ocultos. Safari mantém as restrições de gesto existentes.
+- Durante o filme, o bridge oculta a barra de status e a restaura na saída. O player AVKit também oculta a barra de status; seus controles próprios aparecem ao tocar no vídeo e incluem pausa, busca, retorno, áudio e legendas.
+- TypeScript, 69 testes, builds web/nativo, compilação Swift, assinatura e upload Apple concluídos. O build 5 não foi publicado: corrigida incompatibilidade de override do indicador inferior do Capacitor antes do build 6.
+- Produção: versão Cloudflare `4ca02478-001d-4125-b24d-3c9021fd4d18`. Catálogo HTTP 200 sem código, com sessão pública viewer; funções administrativas seguem protegidas.
+- Validação física pendente: início direto, controles por toque, relógio oculto, retorno ao catálogo e sincronismo em filmes MP4 e MKV.
+
