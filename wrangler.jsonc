@@ -5,45 +5,16 @@
   "compatibility_date": "2026-10-13",
   "compatibility_flags": ["nodejs_compat"],
   "observability": {
-    "enabled": true,
-    "head_sampling_rate": 0.1
+    "enabled": false
   },
+  "limits": { "cpu_ms": 10000 },
   "assets": {
     "directory": "./dist/client",
     "not_found_handling": "single-page-application",
     "binding": "ASSETS"
   },
   "triggers": {
-    "crons": ["*/5 * * * *"]
-  },
-  "kv_namespaces": [
-    {
-      "binding": "MINATTO_KV",
-      "id": "0f8fc1bcdbe74647a4e360dd5fac8de1"
-    }
-  ],
-  "r2_buckets": [
-    {
-      "bucket_name": "minattoflix-media",
-      "binding": "MEDIA_BUCKET"
-    }
-  ],
-  "hyperdrive": [
-    {
-      "binding": "HYPERDRIVE",
-      "id": "f8d8bd8f94e64a02a2e546220a8662ec"
-    }
-  ],
-  "ai": {
-    "binding": "AI"
-  },
-  "durable_objects": {
-    "bindings": [
-      {
-        "name": "WATCH_PARTY",
-        "class_name": "WatchPartyRoom"
-      }
-    ]
+    "crons": ["0 */6 * * *"]
   },
   "migrations": [
     {
@@ -52,6 +23,9 @@
     }
   ],
   "vars": {
+    "COST_MODE": "restricted",
+    "AUTO_SCAN_ENABLED": "false",
+    "ALLOWED_ORIGINS": "capacitor://localhost,http://localhost,https://localhost",
     "DEFAULT_GDRIVE_FOLDER_ID": "12ttfjMP_2MCPvOLiy8bei0oFLa-8UBT3",
     "DEFAULT_ONEDRIVE_SHARE_URL": "https://1drv.ms/f/c/91785c84c5b944af/IgDNDRlmhJB5SZnxsprKGgFyAQ1LqZYj_kdyOwsgLwljI5g?e=HWuHmN",
     "GDRIVE_API_KEY": "",
