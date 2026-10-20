@@ -24,6 +24,7 @@
   ],
   "vars": {
     "COST_MODE": "restricted",
+    "PUBLIC_VIEWING_ENABLED": "true",
     "AUTO_SCAN_ENABLED": "false",
     "ALLOWED_ORIGINS": "capacitor://localhost,http://localhost,https://localhost",
     "DEFAULT_GDRIVE_FOLDER_ID": "12ttfjMP_2MCPvOLiy8bei0oFLa-8UBT3",

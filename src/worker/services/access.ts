@@ -1,6 +1,7 @@
 import type { Env } from '../db';
 
 export interface Session { role: 'viewer' | 'admin'; exp: number; }
+export const publicViewingEnabled = (env: Env): boolean => env.PUBLIC_VIEWING_ENABLED === 'true';
 const encoder = new TextEncoder();
 const encode = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
 const decode = (text: string) => Uint8Array.from(atob(text.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));

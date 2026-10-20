@@ -46,6 +46,7 @@ export interface DurableObjectNamespaceBinding {
 export interface Env extends Omit<CloudflareBindings, 'ASSETS' | 'COST_MODE' | 'AUTO_SCAN_ENABLED' | 'ALLOWED_ORIGINS' | 'GDRIVE_API_KEY' | 'TMDB_API_KEY' | 'ACCESS_CODE' | 'ADMIN_CODE' | 'SESSION_SECRET'> {
   COST_MODE?: string;
   ACCESS_CODE?: string;
+  PUBLIC_VIEWING_ENABLED?: string;
   ADMIN_CODE?: string;
   SESSION_SECRET?: string;
   ALLOWED_ORIGINS?: string;

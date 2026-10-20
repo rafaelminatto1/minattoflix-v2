@@ -40,6 +40,16 @@ test('viewer cannot mutate sources or access administrative metrics', async () =
   assert.equal((await request('/api/metrics/playback-quality', { headers })).status, 403);
 });
 
+test('temporary public viewing opens the existing app gate but keeps administration private', async () => {
+  const bindings = { ...env, PUBLIC_VIEWING_ENABLED: 'true' };
+  const state = await (await request('/api/session', {}, bindings)).json();
+  assert.equal(state.authenticated, true);
+  assert.equal(state.role, 'viewer');
+  assert.equal((await request('/api/admin/diagnostics', {}, bindings)).status, 401);
+  assert.equal((await request('/api/storage-sources', { method: 'POST', body: '{}' }, bindings)).status, 401);
+  assert.equal((await request('/api/stream/hls/file/master.m3u8', {}, bindings)).status, 409);
+});
+
 test('restricted mode masks paid bindings even when someone supplies them', async () => {
   const trap = () => { throw new Error('A disabled binding was invoked'); };
   const bindings = { ...env, AI: { run: trap }, MINATTO_KV: { get: trap }, MEDIA_BUCKET: { get: trap }, WATCH_PARTY: { get: trap }, HYPERDRIVE: {}, GITHUB_TOKEN: 'must-not-use' };

@@ -3,7 +3,7 @@ import { cors } from 'hono/cors';
 import { bodyLimit } from 'hono/body-limit';
 import { getDb, type Env } from './db';
 import { applyCostPolicy, restrictedCosts } from './services/cost-policy';
-import { accessConfigured, readSession, needsAdmin } from './services/access';
+import { accessConfigured, readSession, needsAdmin, publicViewingEnabled } from './services/access';
 import { operationsRoutes, allowOperation } from './routes/operations';
 import { cleanupOperationalData, enqueueTask, runNextTask } from './services/task-queue';
 import { WatchPartyRoom } from './durable-watch-party';
@@ -110,6 +110,7 @@ app.use('/api/*', async (c, next) => {
   if (c.req.path.startsWith('/api/preparation/jobs/')) return next();
   if (!accessConfigured(c.env)) return c.json({ error: 'Acesso ainda não configurado no servidor.' }, 503);
   const session = await readSession(c.req.raw, c.env);
+  if (!session && publicViewingEnabled(c.env) && !needsAdmin(c.req.path, c.req.method)) return next();
   if (!session) return c.json({ error: 'Entre novamente para continuar.' }, 401);
   if (needsAdmin(c.req.path, c.req.method) && session.role !== 'admin') return c.json({ error: 'Acesso de administrador necessário.' }, 403);
   if (!['GET','HEAD'].includes(c.req.method) && needsAdmin(c.req.path, c.req.method)

@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { getDb, type Env } from '../db';
-import { accessConfigured, issueSession, readSession, sameSecret } from '../services/access';
+import { accessConfigured, issueSession, readSession, sameSecret, publicViewingEnabled } from '../services/access';
 
 export const operationsRoutes = new Hono<{ Bindings: Env }>();
 
@@ -21,7 +21,7 @@ export async function allowOperation(env: Env, identity: string, maximum: number
 operationsRoutes.get('/api/session', async c => {
   const session = await readSession(c.req.raw, c.env);
   c.header('Cache-Control', 'no-store');
-  return c.json({ configured: accessConfigured(c.env), authenticated: Boolean(session), role: session?.role || null, apiVersion: 1 });
+  return c.json({ configured: accessConfigured(c.env), authenticated: Boolean(session) || publicViewingEnabled(c.env), role: session?.role || (publicViewingEnabled(c.env) ? 'viewer' : null), apiVersion: 1 });
 });
 
 operationsRoutes.post('/api/session', async c => {
