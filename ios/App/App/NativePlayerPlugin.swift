@@ -6,7 +6,6 @@ class MinattoBridgeViewController: CAPBridgeViewController {
         didSet { setNeedsStatusBarAppearanceUpdate(); setNeedsUpdateOfHomeIndicatorAutoHidden() }
     }
     override var prefersStatusBarHidden: Bool { immersive }
-    override var prefersHomeIndicatorAutoHidden: Bool { immersive }
     override func capacitorDidLoad() {
         bridge?.registerPluginInstance(NativePlayerPlugin())
     }
