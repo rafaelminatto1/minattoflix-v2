@@ -4,7 +4,7 @@ workflows:
     max_build_duration: 60
     instance_type: mac_mini_m2
     integrations:
-      app_store_connect: Codemagic CI
+      app_store_connect: MinattoFlix Codemagic
     environment:
       node: 24
       xcode: latest
@@ -28,7 +28,7 @@ workflows:
         script: |
           set -euo pipefail
           cd ios/App
-          agvtool new-version -all "$(date -u +%Y%m%d%H%M)"
+          agvtool new-version -all "${BUILD_NUMBER:?Missing Codemagic build number}"
       - name: Archive and export signed IPA
         script: |
           xcode-project build-ipa --project ios/App/App.xcodeproj --scheme App
