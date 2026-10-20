@@ -567,12 +567,13 @@ export const App: React.FC = () => {
                         </div>
                       </div>
                       <button
-                        onClick={() => void openDetails(item)}
-                        aria-label={`Áudio, legendas e detalhes de ${item.title}`}
+                        onClick={() => void openPlayer(item)}
+                        disabled={!f}
+                        aria-label={`Assistir ${item.title}`}
                         className="mt-2.5 sm:mt-3 w-full bg-zinc-800 hover:bg-zinc-700 text-xs text-zinc-200 py-2 rounded flex items-center justify-center gap-1.5 cursor-pointer touch-target-sm tap-highlight"
                       >
-                        <Info className="w-3.5 h-3.5 shrink-0" />
-                        <span className="hidden sm:inline truncate">Áudio & Legendas</span>
+                        <Play className="w-3.5 h-3.5 shrink-0" />
+                        <span className="truncate">{item.progress && !item.progress.is_completed?'Continuar':'Assistir'}</span>
                       </button>
                     </div>
                   </div>
