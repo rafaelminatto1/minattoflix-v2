@@ -82,6 +82,7 @@ Referências:
 ## Interface móvel e controles por toque — 20/10/2026
 
 - Build `1.0 (7)`, commit `d42a7e50e65949de572318d3ba245223bcb08a02`: https://codemagic.io/app/6ad6cdb86a483b360aff08eb/build/6ad7eb92454d2506f7ab9ee3
+- Confirmado **Em testes** no grupo interno `MinattoFlix - Teste pessoal`; roteiro salvo em “O que testar”. ID Apple: `a526f560-19e3-4f35-92ec-8e7aae160410`.
 - Navegação móvel: Início, Buscar, Minha lista e Perfil. Categorias continuam disponíveis como filtros no cabeçalho. Busca com histórico local por perfil e limpeza; campo em 16px para evitar zoom involuntário do iPhone.
 - Perfil concentra troca de perfil e acesso administrativo. Ferramentas administrativas exigem sessão admin; removidos os botões de serviços pagos indisponíveis das telas comuns. O servidor continua protegendo as operações.
 - Cartazes abrem detalhes; botões Assistir/Continuar iniciam o vídeo. Detalhes recolhem versões, áudio e legendas; títulos indisponíveis exibem saída clara. Continuar assistindo mostra minutos restantes.
