@@ -21,7 +21,7 @@ import type { AudioTrack, EpisodeItem, MediaItem, SubtitleTrack } from '../types
 interface DetailModalProps {
   item: MediaItem;
   onClose: () => void;
-  onPlay: (item: MediaItem, preferredAudioId?: string, preferredSubtitleId?: string, episode?: EpisodeItem) => void;
+  onPlay: (item: MediaItem, preferredAudioId?: string, preferredSubtitleId?: string, episode?: EpisodeItem, fileId?: string) => void;
   onToggleMyList: (item: MediaItem) => void;
   onRefreshCatalog: () => Promise<void>;
 }
@@ -296,7 +296,7 @@ export const DetailModal: React.FC<DetailModalProps> = ({
             <div className="flex flex-wrap items-center gap-2 sm:gap-3">
               <button
                 disabled={!primaryFile}
-                onClick={() => onPlay(item, selectedAudioId, selectedSubtitleId)}
+                onClick={() => onPlay(item, selectedAudioId, selectedSubtitleId, undefined, selectedFileId)}
                 className="flex-1 sm:flex-initial flex items-center justify-center gap-2 bg-white hover:bg-zinc-200 text-black font-bold text-sm sm:text-base px-5 sm:px-6 py-2.5 rounded transition cursor-pointer touch-target tap-highlight"
               >
                 <Play className="w-5 h-5 fill-black shrink-0" />
@@ -414,6 +414,30 @@ export const DetailModal: React.FC<DetailModalProps> = ({
               )}
             </div>
           </div>
+
+          {/* Multiple File Source Mirrors Switcher */}
+          {item.files.length > 1 && (
+            <div className="bg-zinc-900/80 border border-zinc-800 rounded-lg p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+              <span className="text-zinc-300 font-semibold flex items-center gap-1.5">
+                <HardDrive className="w-4 h-4 text-[#E50914]" /> Servidores / Espelhos Disponíveis ({item.files.length}):
+              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                {item.files.map((f, idx) => (
+                  <button
+                    key={f.id}
+                    onClick={() => setSelectedFileId(f.id)}
+                    className={`px-3 py-1.5 rounded text-xs font-medium transition cursor-pointer ${
+                      f.id === primaryFile?.id
+                        ? 'bg-[#E50914] text-white font-bold shadow'
+                        : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+                    }`}
+                  >
+                    {f.provider === 'onedrive' ? 'OneDrive Direct' : 'Google Drive'} #{idx + 1} ({f.resolution})
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Dual Audio & Subtitles Configuration Section */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 pt-4 border-t border-zinc-800">

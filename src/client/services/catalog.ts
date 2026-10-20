@@ -1,11 +1,52 @@
 import type { MediaFile, MediaItem } from '../types';
 
 declare const __API_ORIGIN__: string | undefined;
+let memorySession = '';
+
+export function sessionToken(): string {
+  try { return typeof localStorage === 'undefined' ? memorySession : localStorage.getItem('minatto-session') || memorySession; }
+  catch { return memorySession; }
+}
+
+export function saveSession(token: string): void {
+  memorySession = token;
+  try { token ? localStorage.setItem('minatto-session', token) : localStorage.removeItem('minatto-session'); }
+  catch { /* Private browsing may deny persistent storage. */ }
+}
+
+/** Cover raw fetch calls too, but never send credentials to external media providers. */
+export function installApiAuthentication(): void {
+  const original = window.fetch.bind(window);
+  window.fetch = async (input, init) => {
+    const target = new URL(input instanceof Request ? input.url : String(input), window.location.href);
+    const expected = new URL(apiUrl('/api/session'), window.location.href);
+    const ours = target.origin === expected.origin && target.pathname.startsWith('/api/');
+    let options = init;
+    if (ours && sessionToken()) {
+      const headers = new Headers(init?.headers || (input instanceof Request ? input.headers : undefined));
+      headers.set('Authorization', `Bearer ${sessionToken()}`);
+      options = { ...init, headers };
+    }
+    const response = await original(input, options);
+    if (ours && response.status === 401 && target.pathname !== '/api/session') {
+      saveSession('');
+      window.dispatchEvent(new Event('minatto-session-expired'));
+    }
+    return response;
+  };
+}
 
 /** The website uses same-origin requests; the bundled iOS app uses the hosted API. */
 export function apiUrl(url: string): string {
   const origin = typeof __API_ORIGIN__ === 'string' ? __API_ORIGIN__ : '';
-  return origin && url.startsWith('/api/') ? `${origin}${url}` : url;
+  const resolved = origin && url.startsWith('/api/') ? `${origin}${url}` : url;
+  const token = sessionToken();
+  // <video>, subtitle tracks and media libraries cannot always set headers (notably iOS).
+  if (token && /^\/api\/(stream|subtitles|prepared)\//.test(url)) {
+    const separator = resolved.includes('?') ? '&' : '?';
+    return `${resolved}${separator}session=${encodeURIComponent(token)}`;
+  }
+  return resolved;
 }
 
 function resolveApiUrls(value: unknown): unknown {
@@ -31,7 +72,9 @@ export function prewarmStream(item?: { files?: MediaFile[] }, explicitFileId?: s
   const targetId = explicitFileId || preferredFile(item)?.id;
   if (!targetId || prewarmedFileIds.has(targetId) || typeof fetch !== 'function') return;
   prewarmedFileIds.add(targetId);
-  fetch(apiUrl(`/api/stream/${encodeURIComponent(targetId)}?prewarm=1`), { method: 'HEAD' }).catch(() => {
+  fetch(apiUrl(`/api/stream/${encodeURIComponent(targetId)}?prewarm=1`), { method: 'HEAD' }).then(response => {
+    if (!response.ok) prewarmedFileIds.delete(targetId);
+  }).catch(() => {
     prewarmedFileIds.delete(targetId);
   });
 }
@@ -40,7 +83,7 @@ export function prewarmStream(item?: { files?: MediaFile[] }, explicitFileId?: s
 const inflightRequests = new Map<string, Promise<Response>>();
 
 function getRequestKey(url: string, init?: RequestInit): string {
-  return `${init?.method || 'GET'}:${url}:${JSON.stringify(init?.body || '')}`;
+  return `${init?.method || 'GET'}:${url}:${JSON.stringify([...new Headers(init?.headers).entries()].sort())}:${JSON.stringify(init?.body || '')}`;
 }
 
 export function qualityLabel(file?: MediaFile): string {
@@ -76,7 +119,7 @@ export async function requestResponse(url: string, init?: RequestInit): Promise<
   const key = getRequestKey(url, init);
   
   // Deduplicate GET requests
-  if (!init?.method || init.method === 'GET') {
+  if ((!init?.method || init.method === 'GET') && !init?.signal) {
     const existing = inflightRequests.get(key);
     if (existing) {
       return existing.then(r => r.clone());
@@ -85,7 +128,7 @@ export async function requestResponse(url: string, init?: RequestInit): Promise<
     const promise = fetch(apiUrl(url), { ...init, signal: init?.signal || AbortSignal.timeout(45000) })
       .then(response => {
         inflightRequests.delete(key);
-        if (!response.ok) throw new Error(`Não foi possível concluir a operação (${response.status}). Tente novamente.`);
+        if (!response.ok) throw new Error(response.status === 403 ? 'Entre com o código de administrador para concluir esta ação.' : `Não foi possível concluir a operação (${response.status}). Tente novamente.`);
         return response;
       })
       .catch(err => {
@@ -94,12 +137,16 @@ export async function requestResponse(url: string, init?: RequestInit): Promise<
       });
     
     inflightRequests.set(key, promise);
-    return promise;
+    // Keep the original body untouched so every consumer gets its own stream.
+    return promise.then(response => response.clone());
   }
   
   // For non-GET, just fetch normally
   const response = await fetch(apiUrl(url), { ...init, signal: init?.signal || AbortSignal.timeout(45000) });
-  if (!response.ok) throw new Error(`Não foi possível concluir a operação (${response.status}). Tente novamente.`);
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null);
+    throw new Error(typeof detail?.error === 'string' ? detail.error : `Não foi possível concluir a operação (${response.status}). Tente novamente.`);
+  }
   return response;
 }
 

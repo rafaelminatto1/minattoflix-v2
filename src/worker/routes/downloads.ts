@@ -1,6 +1,9 @@
 import { Hono } from 'hono';
 import { getDb, type Env } from '../db';
 import { executeCloudScannerSync } from './scanner';
+import { restrictedCosts } from '../services/cost-policy';
+import { sameSecret } from '../services/access';
+import { enqueueTask } from '../services/task-queue';
 
 export const downloadsRoutes = new Hono<{ Bindings: Env }>();
 
@@ -42,6 +45,7 @@ downloadsRoutes.get('/api/downloads', async (c) => {
  * POST /api/downloads/request - Submit a new magnet link to be downloaded and ingested
  */
 downloadsRoutes.post('/api/downloads/request', async (c) => {
+  if (restrictedCosts(c.env)) return c.json({ error: 'Execução externa de downloads desativada para evitar novas cobranças.' }, 409);
   const sql = getDb(c.env);
   const body = await c.req.json().catch(() => null);
 
@@ -154,13 +158,14 @@ downloadsRoutes.post('/api/downloads/request', async (c) => {
  * POST /api/downloads/webhook - Callback from GitHub Actions runner reporting progress & completion
  */
 downloadsRoutes.post('/api/downloads/webhook', async (c) => {
+  if (!c.env.MINATTO_WEBHOOK_SECRET) return c.json({ error: 'Webhook não configurado.' }, 503);
   const sql = getDb(c.env);
 
   // Validação opcional de segurança se MINATTO_WEBHOOK_SECRET estiver configurado
   if (c.env.MINATTO_WEBHOOK_SECRET) {
     const authHeader = c.req.header('Authorization');
     const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
-    if (token !== c.env.MINATTO_WEBHOOK_SECRET) {
+    if (!token || !await sameSecret(token, c.env.MINATTO_WEBHOOK_SECRET)) {
       return c.json({ error: 'Não autorizado' }, 401);
     }
   }
@@ -179,6 +184,8 @@ downloadsRoutes.post('/api/downloads/webhook', async (c) => {
     fileName?: string;
     fileSize?: number;
   };
+  if (!/^[a-f0-9-]{36}$/i.test(jobId) || !['queued','dispatching','downloading','uploading','completed','failed'].includes(status)
+    || (progress !== undefined && (!Number.isFinite(progress) || progress < 0 || progress > 100))) return c.json({ error: 'Status inválido.' }, 400);
 
   try {
     await sql`
@@ -198,7 +205,7 @@ downloadsRoutes.post('/api/downloads/webhook', async (c) => {
       c.executionCtx.waitUntil(
         (async () => {
           try {
-            await executeCloudScannerSync(c.env);
+            await enqueueTask(c.env, 'scan');
             console.log(`[downloads/webhook] Scanner executado com sucesso após conclusão do job ${jobId}`);
           } catch (scanErr) {
             console.error(`[downloads/webhook] Erro ao rodar scanner após job ${jobId}:`, scanErr);

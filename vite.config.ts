@@ -7,7 +7,7 @@ export default defineConfig(({ mode }) => ({
   plugins: [
     react(),
     tailwindcss(),
-    cloudflare({ remoteBindings: mode !== 'offline', config: mode === 'offline' ? (config) => { config.hyperdrive = []; } : undefined }),
+    cloudflare({ remoteBindings: false }),
   ],
   build: {
     outDir: 'dist',

@@ -34,25 +34,33 @@ function decodeHtmlEntities(str: string): string {
  */
 export async function listGDriveFolderEntries(folderId: string, apiKey?: string): Promise<CloudDriveEntry[]> {
   if (apiKey) {
-    const apiUrl = `https://www.googleapis.com/drive/v3/files?q='${encodeURIComponent(
-      folderId
-    )}'+in+parents+and+trashed=false&fields=files(id,name,mimeType,size)&pageSize=200&key=${encodeURIComponent(apiKey)}`;
-    const apiRes = await fetch(apiUrl);
-    if (apiRes.ok) {
+    const entries: CloudDriveEntry[] = [];
+    const visited = new Set<string>();
+    let pageToken = '';
+    do {
+      if (visited.has(pageToken)) throw new Error('Paginação repetida do Google Drive. Tente sincronizar novamente.');
+      visited.add(pageToken);
+      const apiUrl = new URL('https://www.googleapis.com/drive/v3/files');
+      apiUrl.search = new URLSearchParams({ q: `'${folderId.replace(/'/g, "\\'")}' in parents and trashed=false`,
+        fields: 'nextPageToken,files(id,name,mimeType,size)', pageSize: '200', key: apiKey,
+        ...(pageToken ? { pageToken } : {}) }).toString();
+      const apiRes = await fetch(apiUrl, { signal: AbortSignal.timeout(30000) });
+      if (!apiRes.ok) throw new Error(`Google Drive HTTP ${apiRes.status}. Nenhum arquivo foi removido.`);
       const data = (await apiRes.json()) as {
+        nextPageToken?: string;
         files?: Array<{ id: string; name: string; mimeType: string; size?: string }>;
       };
-      if (data.files && data.files.length > 0) {
-        return data.files.map((f) => ({
+      entries.push(...(data.files || []).map((f) => ({
           id: f.id,
           parentId: folderId,
           name: f.name,
           mimeType: f.mimeType,
           sizeBytes: f.size ? parseInt(f.size, 10) : 0,
           isFolder: f.mimeType === 'application/vnd.google-apps.folder',
-        }));
-      }
-    }
+        })));
+      pageToken = data.nextPageToken || '';
+    } while (pageToken);
+    return entries;
   }
 
   // Primary Zero-Key Edge Scraper: embeddedfolderview
@@ -131,12 +139,8 @@ export async function scanGDriveRootFolder(rootFolderId: string, apiKey?: string
           folderName: folder.name,
           files: childEntries.filter((c) => !c.isFolder),
         };
-      } catch {
-        return {
-          folderId: folder.id,
-          folderName: folder.name,
-          files: [],
-        };
+      } catch (error) {
+        throw new Error(`Falha na pasta ${folder.name}: ${error instanceof Error ? error.message : String(error)}`);
       }
     })
   );

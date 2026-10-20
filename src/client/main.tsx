@@ -2,7 +2,11 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { App } from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { AccessGate } from './components/AccessGate';
+import { installApiAuthentication } from './services/catalog';
 import './index.css';
+
+installApiAuthentication();
 
 // Register Service Worker for PWA/Offline support
 if ('serviceWorker' in navigator) {
@@ -35,6 +39,6 @@ if ('serviceWorker' in navigator) {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <ErrorBoundary><App /></ErrorBoundary>
+    <ErrorBoundary><AccessGate><App /></AccessGate></ErrorBoundary>
   </React.StrictMode>
 );

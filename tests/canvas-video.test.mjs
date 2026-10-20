@@ -17,7 +17,9 @@ const mediaMock = dataModule(`
  export class CanvasSink {
    async getCanvas() { throw new Error('Preview must not decode before a user gesture'); }
    async *canvases() {
+     if(globalThis.__canvasVideoFixture.firstFrame) await globalThis.__canvasVideoFixture.firstFrame;
      yield {timestamp:0,canvas:{}};
+     if(globalThis.__canvasVideoFixture.nextFrame) await globalThis.__canvasVideoFixture.nextFrame;
      if(globalThis.__canvasVideoFixture.fail) throw new Error('decoder stopped');
      yield {timestamp:0.04,canvas:{}};
    }
@@ -47,6 +49,22 @@ test('slow decoding draws frames before announcing readiness instead of dropping
  assert.equal(events[0],'draw'); assert.equal(events[1],'ready');
  assert.equal(canvas.dataset.presentedFrames,'2'); player.destroy();
 });
+
+test('a stalled decoder gates audio before the delayed frame arrives and resumes after drawing it', async () => {
+ fixture.fail=false;
+ let release;
+ fixture.nextFrame=new Promise(resolve=>{release=resolve;});
+ const {player,events}=setup();
+ try {
+  await player.open('/movie');await settle();
+  assert.equal(player.isWaitingForFrame(),false);
+  await new Promise(resolve=>setTimeout(resolve,300));
+  assert.equal(player.isWaitingForFrame(),true);
+  release();await settle();
+  assert.equal(player.isWaitingForFrame(),false);
+  assert.equal(events.filter(event=>event==='ready').length,2);
+ } finally {release();fixture.nextFrame=null;player.destroy();}
+});
 test('frame decoder failure reports an error and stops its playback clock', async t => {
  fixture.fail=true; t.mock.method(console,'warn',()=>{});
  const {player,events}=setup(); await player.open('/movie'); await settle();
@@ -65,4 +83,28 @@ test('iPhone preparation offers play without decoding a preview or advancing the
  assert.equal(player.isPaused(),false);
  assert.ok(events.includes('time'));
  player.destroy();
+});
+
+test('audio clock remains gated until the first decoded frame is drawn, including after seeking', async () => {
+ fixture.fail=false;
+ let release;
+ fixture.firstFrame=new Promise(resolve=>{release=resolve;});
+ const {player,events}=setup();
+ try {
+  await player.open('/movie',12,false);
+  player.play(); await settle();
+  assert.equal(player.isPaused(),false);
+  assert.equal(player.isWaitingForFrame(),true);
+  assert.equal(player.getCurrentTime(),12);
+  assert.ok(!events.includes('draw'));
+  release(); await settle();
+  assert.equal(player.isWaitingForFrame(),false);
+  assert.ok(events.indexOf('draw')<events.indexOf('ready'));
+  fixture.firstFrame=new Promise(resolve=>{release=resolve;});
+  player.seek(40); await settle();
+  assert.equal(player.isWaitingForFrame(),true);
+  assert.equal(player.getCurrentTime(),40);
+  release(); await settle();
+  assert.equal(player.isWaitingForFrame(),false);
+ } finally { release(); fixture.firstFrame=null; player.destroy(); }
 });

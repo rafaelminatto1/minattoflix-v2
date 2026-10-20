@@ -110,6 +110,26 @@ export async function scanOneDriveSharedFolder(
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
   };
 
+  const listPages = async (firstUrl: string, initialItems: OneDriveV2Item[] = []) => {
+    const items = [...initialItems];
+    const visited = new Set<string>();
+    let nextUrl = firstUrl;
+    while (nextUrl) {
+      const parsed = new URL(nextUrl);
+      if (parsed.protocol !== 'https:' || parsed.hostname !== 'my.microsoftpersonalcontent.com') {
+        throw new Error('Origem de paginação OneDrive inválida.');
+      }
+      if (visited.has(nextUrl)) throw new Error('Paginação repetida do OneDrive.');
+      visited.add(nextUrl);
+      const response = await fetch(nextUrl, { headers: authHeaders, signal: AbortSignal.timeout(30000) });
+      if (!response.ok) throw new Error(`OneDrive listagem HTTP ${response.status}`);
+      const data = await response.json() as { value?: OneDriveV2Item[]; '@odata.nextLink'?: string };
+      items.push(...(data.value || []));
+      nextUrl = data['@odata.nextLink'] || '';
+    }
+    return items;
+  };
+
   const rootUrl = `https://my.microsoftpersonalcontent.com/_api/v2.0/shares/${shareToken}/driveItem?$expand=children`;
   const rootRes = await fetch(rootUrl, { headers: authHeaders });
   if (!rootRes.ok) {
@@ -122,9 +142,10 @@ export async function scanOneDriveSharedFolder(
     name?: string;
     parentReference?: { driveId?: string };
     children?: OneDriveV2Item[];
+    'children@odata.nextLink'?: string;
   };
 
-  const children = rootData.children || [];
+  const children = await listPages(rootData['children@odata.nextLink'] || '', rootData.children || []);
   const bundles: DiscoveredFolderBundle[] = [];
   const directFiles: CloudDriveEntry[] = [];
 
@@ -164,14 +185,10 @@ export async function scanOneDriveSharedFolder(
       )}/items/${encodeURIComponent(folder.id)}/children`;
 
       try {
-        const subRes = await fetch(subUrl, { headers: authHeaders });
-        if (!subRes.ok) {
-          return { folderId: folder.id, folderName: folder.name, files: [] };
-        }
-        const subData = (await subRes.json()) as { value?: OneDriveV2Item[] };
+        const subItems = await listPages(subUrl);
         const files: CloudDriveEntry[] = [];
 
-        for (const sf of subData.value || []) {
+        for (const sf of subItems) {
           if (sf.folder) continue;
           if (sf['@content.downloadUrl']) {
             cacheDownloadUrl(sf.id, sf['@content.downloadUrl'], kv);
@@ -191,8 +208,8 @@ export async function scanOneDriveSharedFolder(
           folderName: folder.name,
           files,
         };
-      } catch {
-        return { folderId: folder.id, folderName: folder.name, files: [] };
+      } catch (error) {
+        throw new Error(`Falha na pasta ${folder.name}: ${error instanceof Error ? error.message : String(error)}`);
       }
     })
   );

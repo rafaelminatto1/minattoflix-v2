@@ -25,7 +25,7 @@ profilesRoutes.post('/api/progress', async (c) => {
     selectedSubtitleId?: string;
   }>();
 
-  if (!Number.isFinite(body.positionSeconds) || !Number.isFinite(body.durationSeconds) || body.durationSeconds <= 0) return c.json({ error: 'Progresso inválido.' }, 400);
+  if (!uuidRe.test(body.profileId || '') || !uuidRe.test(body.mediaItemId || '') || !Number.isFinite(body.positionSeconds) || !Number.isFinite(body.durationSeconds) || body.durationSeconds <= 0) return c.json({ error: 'Progresso inválido.' }, 400);
   const pos = Math.min(Math.floor(body.durationSeconds), Math.max(0, Math.floor(body.positionSeconds || 0)));
   const dur = Math.max(1, Math.floor(body.durationSeconds || 1));
   const isCompleted = pos / dur >= 0.92;
@@ -71,6 +71,7 @@ profilesRoutes.delete('/api/progress/:mediaItemId', async (c) => {
 profilesRoutes.post('/api/my-list/toggle', async (c) => {
   const sql = getDb(c.env);
   const { profileId, mediaItemId } = await c.req.json<{ profileId: string; mediaItemId: string }>();
+  if (!uuidRe.test(profileId || '') || !uuidRe.test(mediaItemId || '')) return c.json({ error: 'Perfil e título inválidos.' }, 400);
 
   const existing = await sql`
     SELECT id FROM my_list WHERE profile_id = ${profileId} AND media_item_id = ${mediaItemId}
@@ -98,6 +99,7 @@ profilesRoutes.post('/api/profiles', async (c) => {
   }>();
 
   const colors = ['e50914', '0071eb', '2ecc71', 'f39c12', '9b59b6'];
+  if (typeof body.name !== 'string' || !body.name.trim() || body.name.length > 80) return c.json({ error: 'Nome de perfil inválido.' }, 400);
   const color = colors[cryptoRandomIndex(colors.length)];
   const avatarUrl = `https://api.dicebear.com/9.x/fun-emoji/svg?seed=${encodeURIComponent(body.name)}&backgroundColor=${color}`;
 

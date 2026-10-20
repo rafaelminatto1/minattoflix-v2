@@ -197,6 +197,7 @@ bootstrapRoutes.get('/api/media/:id/details', bootstrapHandler);
  * POST /api/media/:id/enrich-ai
  */
 bootstrapRoutes.post('/api/media/:id/enrich-ai', async (c) => {
+  if (!c.env.AI) return c.json({ error: 'IA desativada para evitar cobrança adicional.' }, 409);
   const mediaId = c.req.param('id');
   const sql = getDb(c.env);
   const rows = await sql`SELECT * FROM media_items WHERE id = ${mediaId} LIMIT 1`;
@@ -262,8 +263,12 @@ bootstrapRoutes.get('/api/cloudflare/status', async (c) => {
     hyperdriveConnected: Boolean(c.env.HYPERDRIVE),
     workersAiConnected: Boolean(c.env.AI),
     durableObjectsConnected: Boolean(c.env.WATCH_PARTY),
-    cronSchedule: '*/5 * * * * (A cada 5 minutos)',
-    regionHint: 'South America (sa-east-1 / GRU Edge)',
+    cronSchedule: '0 */6 * * * (A cada 6 horas)',
+    costMode: c.env.COST_MODE || 'restricted',
+    databaseDriver: 'neon-http',
+    connectivityTested: false,
+    watchPartyTransport: 'neon-polling',
+    autoScanEnabled: c.env.AUTO_SCAN_ENABLED === 'true',
   });
 });
 

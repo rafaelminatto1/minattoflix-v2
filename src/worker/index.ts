@@ -1,6 +1,11 @@
 import { Hono, type Context } from 'hono';
 import { cors } from 'hono/cors';
+import { bodyLimit } from 'hono/body-limit';
 import { getDb, type Env } from './db';
+import { applyCostPolicy, restrictedCosts } from './services/cost-policy';
+import { accessConfigured, readSession, needsAdmin } from './services/access';
+import { operationsRoutes, allowOperation } from './routes/operations';
+import { cleanupOperationalData, enqueueTask, runNextTask } from './services/task-queue';
 import { WatchPartyRoom } from './durable-watch-party';
 
 export { WatchPartyRoom };
@@ -9,12 +14,14 @@ export { WatchPartyRoom };
 import { bootstrapRoutes } from './routes/bootstrap';
 import { streamRoutes } from './routes/stream';
 import { subtitlesRoutes } from './routes/subtitles';
-import { scannerRoutes, executeCloudScannerSync, warmAllMovieHeadChunks } from './routes/scanner';
+import { scannerRoutes, executeCloudScannerSync, healMissingMediaCovers } from './routes/scanner';
 import { profilesRoutes } from './routes/profiles';
 import { storageRoutes } from './routes/storage';
 import { watchPartyRoutes } from './routes/watch-party';
 import { mediaRoutes } from './routes/media';
 import { downloadsRoutes } from './routes/downloads';
+import {preparationRoutes} from './routes/preparation';
+import {verifyPreparationRunner} from './services/github-identity';
 
 // Structured logging utility
 function createLogger(c: Context) {
@@ -52,8 +59,7 @@ function createLogger(c: Context) {
         path: c.req.path,
         method: c.req.method,
         durationMs: Date.now() - startTime,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+        error: error instanceof Error ? error.name : 'UnknownError',
         ...data,
       }));
     },
@@ -63,22 +69,77 @@ function createLogger(c: Context) {
 // Health check endpoint
 const app = new Hono<{ Bindings: Env }>();
 
+app.use('/api/*', async (c, next) => {
+  await next();
+  // Route-specific streaming responses must not override the authentication/cache policy.
+  c.header('Cache-Control', 'private, no-store');
+  c.header('Referrer-Policy', 'no-referrer');
+  c.header('X-Content-Type-Options', 'nosniff');
+  const origin = c.req.header('Origin');
+  const allowed = [new URL(c.req.url).origin, 'capacitor://localhost', 'http://localhost',
+    ...(c.env.ALLOWED_ORIGINS || '').split(',').map(value => value.trim()).filter(Boolean)];
+  c.header('Access-Control-Allow-Origin', origin && allowed.includes(origin) ? origin : undefined);
+});
+
+app.use('/api/*', cors({
+  origin: (origin, c: Context<{ Bindings: Env }>) => {
+    const allowed = [new URL(c.req.url).origin, 'capacitor://localhost', 'http://localhost',
+      ...(c.env.ALLOWED_ORIGINS || '').split(',').map((value: string) => value.trim()).filter(Boolean)];
+    return allowed.includes(origin) ? origin : '';
+  },
+  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD'],
+  allowHeaders: ['Content-Type', 'Range', 'Authorization'],
+  exposeHeaders: ['Content-Length', 'Content-Range', 'Accept-Ranges', 'Content-Type', 'Retry-After'],
+}));
+app.use('/api/*', async (c, next) => {
+  const runner=c.req.path.startsWith('/api/preparation/jobs/');
+  if(runner) {
+    if(restrictedCosts(c.env))return c.json({error:'Preparação na nuvem desativada pelo controle de custos.'},409);
+    if(!await verifyPreparationRunner(c.req.header('Authorization')))return c.json({error:'Executor não autorizado.'},401);
+  }
+  const maximum=runner && c.req.method==='PUT'?32*1024*1024:c.req.path==='/api/subtitles/upload'?2*1024*1024:65536;
+  return bodyLimit({maxSize:maximum,onError:context=>context.json({error:'Solicitação muito grande.'},413)})(c,next);
+});
+app.use('/api/*', async (c, next) => {
+  c.header('Cache-Control', 'no-store');
+  c.header('Referrer-Policy', 'no-referrer');
+  c.header('X-Content-Type-Options', 'nosniff');
+  if (c.req.method === 'OPTIONS' || ['/api/session', '/api/health'].includes(c.req.path)) return next();
+  if (c.req.path === '/api/downloads/webhook') return next();
+  // The dedicated preparation middleware already authenticated the OIDC runner.
+  if (c.req.path.startsWith('/api/preparation/jobs/')) return next();
+  if (!accessConfigured(c.env)) return c.json({ error: 'Acesso ainda não configurado no servidor.' }, 503);
+  const session = await readSession(c.req.raw, c.env);
+  if (!session) return c.json({ error: 'Entre novamente para continuar.' }, 401);
+  if (needsAdmin(c.req.path, c.req.method) && session.role !== 'admin') return c.json({ error: 'Acesso de administrador necessário.' }, 403);
+  if (!['GET','HEAD'].includes(c.req.method) && needsAdmin(c.req.path, c.req.method)
+    && !await allowOperation(c.env, `admin:${c.req.header('CF-Connecting-IP') || 'local'}`, 10)) {
+    c.header('Retry-After', '60');
+    return c.json({ error: 'Aguarde antes de iniciar outra tarefa.' }, 429);
+  }
+  await next();
+});
+app.route('/', operationsRoutes);
+
 // Health check - must be before CORS for monitoring
 app.get('/api/health', async (c) => {
+  if (c.req.query('deep') !== 'true') return c.json({ status: 'alive', apiVersion: 1 });
+  const session = await readSession(c.req.raw, c.env);
+  if (session?.role !== 'admin') return c.json({ error: 'Não autorizado.' }, 401);
   const logger = createLogger(c);
   const startTime = Date.now();
   
   try {
     // Check KV
     if (c.env.MINATTO_KV) await c.env.MINATTO_KV.get('health-check');
-    const kvLatency = Date.now() - startTime;
+    const kvLatency = c.env.MINATTO_KV ? Date.now() - startTime : null;
     
     // Check R2
     const r2Start = Date.now();
     if (c.env.MEDIA_BUCKET) await c.env.MEDIA_BUCKET.get('health-check');
-    const r2Latency = Date.now() - r2Start;
+    const r2Latency = c.env.MEDIA_BUCKET ? Date.now() - r2Start : null;
     
-    // Check Hyperdrive (DB)
+    // Test the actual Neon HTTP connection; Hyperdrive is not used by getDb().
     const dbStart = Date.now();
     const db = getDb(c.env);
     await db`SELECT 1`;
@@ -104,7 +165,7 @@ app.get('/api/health', async (c) => {
     return c.json({
       status: 'unhealthy',
       timestamp: new Date().toISOString(),
-      error: error instanceof Error ? error.message : String(error),
+      error: 'Falha ao consultar dependências.',
     }, 503);
   }
 });
@@ -139,18 +200,8 @@ app.onError((error, c) => {
   return c.json({ error: 'Não foi possível concluir a operação. Tente novamente.' }, 500);
 });
 
-// CORS for API routes
-app.use(
-  '/api/*',
-  cors({
-    origin: '*',
-    allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD'],
-    allowHeaders: ['Content-Type', 'Range', 'Authorization'],
-    exposeHeaders: ['Content-Length', 'Content-Range', 'Accept-Ranges', 'Content-Type', 'X-Cloud-Provider', 'X-KV-Cache'],
-  })
-);
-
-// Mount all route modules
+// Mount all route modules. All user/admin sessions are verified above.
+app.route('/',preparationRoutes);
 app.route('/', bootstrapRoutes);
 app.route('/', streamRoutes);
 app.route('/', subtitlesRoutes);
@@ -162,13 +213,21 @@ app.route('/', mediaRoutes);
 app.route('/', downloadsRoutes);
 
 // Cron trigger handler
+export { app };
 export default {
-  fetch: app.fetch,
+  fetch(request: Request, env: Env, ctx: Parameters<typeof app.fetch>[2]) {
+    return app.fetch(request, applyCostPolicy(env), ctx);
+  },
   async scheduled(_event: unknown, env: Env, ctx: { waitUntil: (p: Promise<unknown>) => void }) {
     ctx.waitUntil(
       (async () => {
-        await executeCloudScannerSync(env);
-        await warmAllMovieHeadChunks(env, 12).catch(() => {});
+        const safeEnv = applyCostPolicy(env);
+        await cleanupOperationalData(safeEnv);
+        if (safeEnv.AUTO_SCAN_ENABLED === 'true') await enqueueTask(safeEnv, 'scan');
+        await runNextTask(safeEnv, {
+          scan: () => executeCloudScannerSync(safeEnv),
+          covers: () => healMissingMediaCovers(safeEnv, 20),
+        });
       })()
     );
   },

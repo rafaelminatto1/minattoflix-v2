@@ -100,6 +100,21 @@ test('hidden native video events cannot stop audio driven by the canvas clock', 
   ctrl.destroy();
 });
 
+test('play notification cannot start audio while the canvas waits for its first frame', () => {
+ const {ctrl}=setup();
+ let waiting=true;
+ ctrl.setClockOverride({getCurrentTime:()=>0,isPaused:()=>waiting,getPlaybackRate:()=>1},true);
+ let starts=0;
+ ctrl.handlePlay=()=>{starts++;};
+ ctrl.handlePlaying=()=>{starts++;};
+ ctrl.notifyClockPlay();
+ assert.equal(starts,0);
+ waiting=false;
+ ctrl.notifyClockPlay();
+ assert.equal(starts,2);
+ ctrl.destroy();
+});
+
 test('a playback tap resumes an interrupted iOS audio context', () => {
   const {ctrl}=setup();
   ctrl.resumeAudioContext();

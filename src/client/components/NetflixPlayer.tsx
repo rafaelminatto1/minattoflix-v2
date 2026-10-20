@@ -1,5 +1,7 @@
 import { isPlayerFullscreen, togglePlayerFullscreen, enterPlayerFullscreen, exitPlayerFullscreen, type FullscreenVideo } from '../services/fullscreen';
 import { apiUrl, requestResponse } from '../services/catalog';
+import { RoomTransport } from '../services/roomTransport';
+import { createPlayerMetrics } from '../services/playerMetrics';
 import { useDialog } from '../hooks/useDialog';
 import React, { useEffect, useRef, useState, useCallback, createContext, useContext } from 'react';
 import {
@@ -14,6 +16,7 @@ import {
   Maximize,
   Minimize,
   Subtitles,
+  Languages,
   Check,
   Upload,
   Cpu,
@@ -38,6 +41,7 @@ import {
   ensureDolbyDecoder,
   inspectStreamWithMediabunny,
   isIosWebKit,
+  isTvOrAndroidNative,
   parseWebVttCues,
   type MediabunnyTrackSummary,
   type VttCueItem,
@@ -182,6 +186,7 @@ interface NetflixPlayerProps {
   activeProfile: Profile;
   initialAudioId?: string;
   initialSubtitleId?: string;
+  initialFileId?: string;
   onClose: () => void;
   onSaveProgress: (data: {
     mediaItemId: string;
@@ -210,6 +215,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
   activeProfile,
   initialAudioId,
   initialSubtitleId,
+  initialFileId,
   onClose,
   onSaveProgress,
   onRefreshCatalog,
@@ -222,12 +228,14 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
   const audioControllerRef = useRef<HybridAudioSyncController | null>(null);
   const controlsTimerRef = useRef<number | null>(null);
   const failedFilesRef = useRef(new Set<string>());
-  const wsRef = useRef<WebSocket | null>(null);
+  const wsRef = useRef<RoomTransport | null>(null);
+  const metricsRef = useRef<ReturnType<typeof createPlayerMetrics> | null>(null);
+  useEffect(() => { metricsRef.current = createPlayerMetrics(); }, [item.id]);
   const suppressSyncBroadcastRef = useRef<boolean>(false);
 
   // Prefer the mirror that supports sustained ranged playback; Drive may
   // return a download confirmation page for large public media requests.
-  const initialSelectedFile = (isIosWebKit() && item.files.find((file) =>
+  const initialSelectedFile = item.files.find(file => file.id === initialFileId) || (isIosWebKit() && item.files.find((file) =>
     /^(mp4|m4v)$/i.test(file.container || '') || /\.(mp4|m4v)$/i.test(file.filename || '')))
     || item.files.find((file) => file.provider === 'onedrive') || item.files[0];
   const [selectedFile, setSelectedFile] = useState<MediaFile | undefined>(initialSelectedFile);
@@ -280,6 +288,13 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
   const [showQualityDashboard, setShowQualityDashboard] = useState(false);
   const [osdMessage, setOsdMessage] = useState<{ text: string; icon?: 'forward' | 'backward' | 'volume' | 'caption' | 'speed' | 'play' | 'pause'; id: number } | null>(null);
+  const [videoFitMode, setVideoFitMode] = useState<'cover' | 'contain'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('minattoflix_videoFit');
+      if (saved === 'cover' || saved === 'contain') return saved;
+    }
+    return 'contain';
+  });
   const osdTimerRef = useRef<number | null>(null);
   const clickTimeoutRef = useRef<number | null>(null);
 
@@ -290,6 +305,17 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
       setOsdMessage(null);
     }, 1200);
   }, []);
+
+  const toggleFitMode = useCallback(() => {
+    setVideoFitMode((prev) => {
+      const next = prev === 'cover' ? 'contain' : 'cover';
+      try {
+        localStorage.setItem('minattoflix_videoFit', next);
+      } catch {}
+      showOsdFeedback(next === 'cover' ? 'Preencher tela inteira' : 'Ajustar à tela original');
+      return next;
+    });
+  }, [showOsdFeedback]);
 
   // Persist preferences to localStorage
   useEffect(() => { localStorage.setItem('minattoflix_volume', String(volume)); }, [volume]);
@@ -329,40 +355,10 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
     getPerformanceTime: () => performance.now(),
   });
 
-  const introEligible = playing && currentTime >= 4 && currentTime <= 88;
-  useEffect(() => {
-    if (!introEligible || introDismissed) return;
-    const timer = window.setTimeout(() => setIntroDismissed(true), 3000);
-    return () => window.clearTimeout(timer);
-  }, [introEligible, introDismissed]);
-  useEffect(() => { setIntroDismissed(false); }, [effectiveStreamUrl]);
-
-
-
-  useEffect(() => {
-    if (!playing || streamError) return;
-    let disposed = false;
-    let pending = false;
-    let lock: WakeLockSentinel | null = null;
-    const acquire = async () => {
-      if (disposed || pending || lock || document.visibilityState !== 'visible' || !navigator.wakeLock) return;
-      pending = true;
-      try {
-        const next = await navigator.wakeLock.request('screen');
-        if (disposed) { await next.release(); return; }
-        lock = next;
-        next.addEventListener('release', () => { if (lock === next) lock = null; });
-      } catch { /* Browser or battery policy can deny the request. */ }
-      finally { pending = false; }
-    };
-    void acquire();
-    document.addEventListener('visibilitychange', acquire);
-    return () => {
-      disposed = true;
-      document.removeEventListener('visibilitychange', acquire);
-      void lock?.release().catch(() => {});
-    };
-  }, [playing, streamError]);
+  const introEnd = item.intro_end_seconds;
+  const introEligible = playing && typeof introEnd === 'number' && Number.isFinite(introEnd)
+    && introEnd > (item.intro_start_seconds || 0) && introEnd < duration
+    && currentTime >= (item.intro_start_seconds || 0) && currentTime < introEnd;
 
   // Intro skip timer - hide "Pular abertura" after 3 seconds of eligibility
   useEffect(() => {
@@ -409,110 +405,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, []);
 
-  // Core Web Vitals + Custom Metrics Reporting
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    
-    let lcpReported = false;
-    let fidReported = false;
-    let clsValue = 0;
-    let clsEntries: PerformanceEntry[] = [];
-    
-    // LCP Observer
-    const lcpObserver = new PerformanceObserver((list) => {
-      const entries = list.getEntries();
-      const lastEntry = entries[entries.length - 1];
-      if (!lcpReported && lastEntry) {
-        lcpReported = true;
-        reportMetric('LCP', lastEntry.startTime);
-      }
-    });
-    lcpObserver.observe({ type: 'largest-contentful-paint', buffered: true });
-    
-    // FID Observer
-    const fidObserver = new PerformanceObserver((list) => {
-      const entries = list.getEntries();
-      const firstInput = entries[0] as PerformanceEventTiming;
-      if (!fidReported && firstInput) {
-        fidReported = true;
-        reportMetric('FID', firstInput.processingStart - firstInput.startTime);
-      }
-    });
-    fidObserver.observe({ type: 'first-input', buffered: true });
-    
-    // CLS Observer
-    const clsObserver = new PerformanceObserver((list) => {
-      for (const entry of list.getEntries()) {
-        const layoutShift = entry as PerformanceEntry & { hadRecentInput: boolean; value: number };
-        if (!layoutShift.hadRecentInput) {
-          clsValue += layoutShift.value;
-          clsEntries.push(layoutShift);
-        }
-      }
-    });
-    clsObserver.observe({ type: 'layout-shift', buffered: true });
-    
-    function reportMetric(name: string, value: number) {
-      fetch('/api/metrics', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name,
-          value: Math.round(value),
-          url: window.location.href,
-          timestamp: Date.now(),
-          sessionId: sessionStorage.getItem('sessionId') || crypto.randomUUID(),
-        }),
-        keepalive: true,
-      }).catch(() => {});
-    }
-    
-    // Report CLS on page unload
-    const reportCLS = () => {
-      if (clsValue > 0) {
-        reportMetric('CLS', clsValue);
-      }
-    };
-    
-    window.addEventListener('beforeunload', reportCLS);
-    
-    // Report playback metrics periodically
-    const metricsInterval = setInterval(() => {
-      if (videoRef.current && !useWebCodecsCanvas) {
-        const v = videoRef.current;
-        reportMetric('playback_position', v.currentTime);
-        reportMetric('playback_duration', v.duration);
-        reportMetric('playback_buffered', v.buffered.length > 0 ? v.buffered.end(v.buffered.length - 1) : 0);
-        reportMetric('playback_rate', v.playbackRate);
-        reportMetric('playback_volume', v.volume);
-        reportMetric('playback_stalled', v.paused ? 0 : 1);
-      } else if (useWebCodecsCanvas && canvasPlayerRef.current) {
-        const p = canvasPlayerRef.current;
-        reportMetric('playback_position', p.getCurrentTime());
-        reportMetric('playback_rate', p.getPlaybackRate());
-        reportMetric('playback_stalled', p.isPaused() ? 0 : 1);
-      }
-      
-      // Audio diagnostics
-      if (audioControllerRef.current) {
-        const diag = audioControllerRef.current.getAudioDiagnostics();
-        reportMetric('audio_wasm_active', diag.wasmActive ? 1 : 0);
-        reportMetric('audio_scheduled_buffers', diag.wasmScheduledBuffers);
-        reportMetric('audio_output_peak', diag.audioOutputPeak * 10000);
-        reportMetric('audio_context_state', diag.audioContextState === 'running' ? 1 : 0);
-      }
-    }, 30000);
-    
-    return () => {
-      lcpObserver.disconnect();
-      fidObserver.disconnect();
-      clsObserver.disconnect();
-      window.removeEventListener('beforeunload', reportCLS);
-      clearInterval(metricsInterval);
-    };
-  }, [useWebCodecsCanvas]);
-
-
+  // Playback telemetry uses bounded events; there is no periodic metrics upload.
 
   // Lock orientation to landscape when entering fullscreen on mobile
   // This must be called within a user gesture to work on iOS
@@ -623,33 +516,6 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
   // Custom Subtitle Renderer State
   const [subtitleCues, setSubtitleCues] = useState<VttCueItem[]>([]);
 
-  // Auto Skip Intro Detection: Analyze subtitle gaps > 60s (intro/outro)
-  useEffect(() => {
-    if (!subtitleCues.length || !duration) return;
-    let introEnd = 88; // Default fallback
-    let outroStart = duration - 120;
-    
-    // Find largest gap in subtitles (likely intro/outro)
-    for (let i = 1; i < subtitleCues.length; i++) {
-      const gap = subtitleCues[i].start - subtitleCues[i - 1].end;
-      if (gap > 60) {
-        if (subtitleCues[i - 1].end < duration * 0.15) {
-          // Early gap = intro
-          introEnd = Math.min(subtitleCues[i].start, 180);
-        } else if (subtitleCues[i].start > duration * 0.85) {
-          // Late gap = outro
-          outroStart = Math.max(subtitleCues[i - 1].end, duration - 180);
-        }
-      }
-    }
-    
-    // Update intro eligibility based on detected intro
-    if (introEnd !== 88) {
-      // Store detected intro/outro for skip buttons
-      (window as any).__detectedIntroEnd = introEnd;
-      (window as any).__detectedOutroStart = outroStart;
-    }
-  }, [subtitleCues, duration]);
   const [activeCueText, setActiveCueText] = useState<string>('');
 
   // Cloudflare Durable Object Watch Party & TV Remote State
@@ -665,7 +531,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
   const enterFullscreen = useCallback(async () => {
     setFullscreenError('');
     const doc = document as Document & { webkitFullscreenElement?: Element | null };
-    if (isPlayerFullscreen(doc, videoRef.current as FullscreenVideo | null)) {
+    if (isPlayerFullscreen(doc, videoRef.current as FullscreenVideo | null) || expandedPlayer) {
       setIsFullscreen(true);
       return;
     }
@@ -679,43 +545,38 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
       }
     }
 
-    // On iOS, use native video fullscreen (webkitEnterFullscreen) only for native <video>, NOT when rendering on canvas
-    const nativeVideo = videoRef.current as (HTMLVideoElement & { webkitEnterFullscreen?: () => void }) | null;
-    if (isIosWebKit() && !useWebCodecsCanvas && nativeVideo?.webkitEnterFullscreen) {
-      try {
-        nativeVideo.webkitEnterFullscreen();
-        setIsFullscreen(true);
-        return;
-      } catch {
-        // Fallback to container fullscreen
-      }
+    // On iOS Safari/WebKit, use MinattoFlix immersive expanded fullscreen
+    // to preserve all custom controls, audio/subtitles selection and edge-to-edge fill
+    if (isIosWebKit()) {
+      setExpandedPlayer(true);
+      setIsFullscreen(true);
+      return;
     }
+
     try {
       await enterPlayerFullscreen(
         document,
         containerRef.current || document.documentElement,
         useWebCodecsCanvas ? null : (videoRef.current as FullscreenVideo | null),
-        isIosWebKit() && !useWebCodecsCanvas
+        false
       );
       const active = isPlayerFullscreen(document, videoRef.current as FullscreenVideo | null);
       setIsFullscreen(active);
     } catch {
-      if (isIosWebKit() && useWebCodecsCanvas) {
-        setExpandedPlayer(true);
-        setIsFullscreen(true);
-        setFullscreenError('Modo ampliado ativado. Gire o iPhone para assistir na horizontal.');
-      }
+      setExpandedPlayer(true);
+      setIsFullscreen(true);
     }
-  }, [isMobile, useWebCodecsCanvas]);
+  }, [isMobile, useWebCodecsCanvas, expandedPlayer]);
 
   const toggleFullscreen = useCallback(async () => {
     setFullscreenError('');
     const doc = document as Document & { webkitFullscreenElement?: Element | null };
-    const currentIsFs = isPlayerFullscreen(doc, videoRef.current as FullscreenVideo | null);
+    const currentIsFs = isPlayerFullscreen(doc, videoRef.current as FullscreenVideo | null) || expandedPlayer;
     const orientation = (screen as Screen & { orientation?: { lock?: (mode: string) => Promise<void>; unlock?: () => void } }).orientation;
 
     if (currentIsFs) {
       try {
+        setExpandedPlayer(false);
         await exitPlayerFullscreen(document, videoRef.current as FullscreenVideo | null);
         setIsFullscreen(false);
         orientation?.unlock?.();
@@ -726,16 +587,16 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
     }
 
     await enterFullscreen();
-  }, [enterFullscreen]);
+  }, [enterFullscreen, expandedPlayer]);
 
   useEffect(() => {
     const syncFullscreenState = () => {
       const doc = document as Document & { webkitFullscreenElement?: Element | null };
-      setIsFullscreen(isPlayerFullscreen(doc, videoRef.current as FullscreenVideo | null));
+      setIsFullscreen(isPlayerFullscreen(doc, videoRef.current as FullscreenVideo | null) || expandedPlayer);
     };
     const video = videoRef.current;
     const onNativeEnter = () => { setIsFullscreen(true); setFullscreenError(''); };
-    const onNativeExit = () => setIsFullscreen(false);
+    const onNativeExit = () => { setIsFullscreen(false); setExpandedPlayer(false); };
     video?.addEventListener('webkitbeginfullscreen', onNativeEnter);
     video?.addEventListener('webkitendfullscreen', onNativeExit);
     syncFullscreenState();
@@ -752,7 +613,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
 
   const hlsMasterUrl = selectedFile ? getHlsMasterUrl(selectedFile.id) : '';
 
-  // Determine if we should use HLS (only if explicitly requested or stream is an HLS playlist)
+  // Determine if we should use HLS (always prefer HLS for MKV or on TV/Native to leverage hardware decoders)
   const isDirectHlsStream = Boolean(effectiveStreamUrl && /\.m3u8(\?|$)/i.test(effectiveStreamUrl));
   const shouldUseHls = !useWebCodecsCanvas && !hlsError && (useHls || isDirectHlsStream);
 
@@ -866,10 +727,13 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
         setBufferedEnd(bufEnd);
       },
       onCanPlay: () => {
+        metricsRef.current?.('start');
         if (!active) return;
         clearLoadTimer();
         setIsBuffering(false);
         setStreamError(null);
+        // Start/re-anchor audio only after the canvas has presented a frame.
+        audioControllerRef.current?.notifyClockPlay();
       },
       onReadyToPlay: () => {
         if (!active) return;
@@ -883,18 +747,20 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
         }
       },
       onWaiting: () => {
+        metricsRef.current?.('waiting');
         if (!active) return;
+        audioControllerRef.current?.notifyClockPause();
         setIsBuffering(true);
         armLoadTimer();
       },
-      onError: failPlayback,
+      onError: reason => { metricsRef.current?.('error'); failPlayback(reason); },
     });
     canvasPlayerRef.current = player;
 
     audioControllerRef.current?.setClockOverride(
       {
         getCurrentTime: () => player.getCurrentTime(),
-        isPaused: () => player.isPaused(),
+        isPaused: () => player.isPaused() || player.isWaitingForFrame(),
         getPlaybackRate: () => player.getPlaybackRate(),
       },
       true
@@ -1212,9 +1078,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
     const cleanCode = codeToJoin.trim().toUpperCase() || 'MINA';
     setRoomCode(cleanCode);
 
-    const wsUrl = new URL(apiUrl(`/api/watch-party/${encodeURIComponent(cleanCode)}`), window.location.href);
-    wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(wsUrl);
+    const ws = new RoomTransport(cleanCode);
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -1242,10 +1106,12 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
         } else if (data.type === 'sync_state' && data.payload) {
           const p = data.payload;
           setPartyParticipants(Number(p.participants || 1));
-          if (videoRef.current) {
+          if (videoRef.current && (!p.mediaItemId || p.mediaItemId === item.id)) {
             suppressSyncBroadcastRef.current = true;
-            if (Math.abs(videoRef.current.currentTime - Number(p.currentTime || 0)) > 2) {
-              videoRef.current.currentTime = Number(p.currentTime || 0);
+            const elapsed = p.playing && Number.isFinite(p.updatedAt) ? Math.max(0, (Date.now() - p.updatedAt) / 1000) : 0;
+            const target = Math.min(Number.isFinite(videoRef.current.duration) ? videoRef.current.duration : 604800, Number(p.currentTime || 0) + elapsed);
+            if (Math.abs(videoRef.current.currentTime - target) > 2) {
+              videoRef.current.currentTime = target;
             }
             if (p.playing && videoRef.current.paused) {
               videoRef.current.play().catch(() => {});
@@ -1408,14 +1274,26 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
       if (e.key === ' ' && e.target instanceof HTMLButtonElement) return;
 
       const key = e.key.toLowerCase();
-      if (e.key === ' ' || key === 'k') {
+      const keyCode = e.keyCode;
+
+      // Smart TV & Remote Control Keycodes (Play/Pause, DPadCenter, Media keys)
+      if (
+        e.key === ' ' ||
+        key === 'k' ||
+        key === 'mediaplaypause' ||
+        key === 'mediaplay' ||
+        key === 'mediapause' ||
+        keyCode === 85 ||
+        keyCode === 126 ||
+        keyCode === 127
+      ) {
         e.preventDefault();
         togglePlay();
         showOsdFeedback(!playing ? 'Reproduzindo' : 'Pausado', !playing ? 'play' : 'pause');
-      } else if (e.key === 'ArrowRight' || key === 'l') {
+      } else if (e.key === 'ArrowRight' || key === 'l' || key === 'mediafastforward' || keyCode === 90 || keyCode === 227) {
         e.preventDefault();
         skipSeconds(10);
-      } else if (e.key === 'ArrowLeft' || key === 'j') {
+      } else if (e.key === 'ArrowLeft' || key === 'j' || key === 'mediarewind' || keyCode === 89 || keyCode === 228) {
         e.preventDefault();
         skipSeconds(-10);
       } else if (e.key === 'ArrowUp') {
@@ -1468,7 +1346,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
       } else if (key === '?' || key === 'h') {
         e.preventDefault();
         setShowShortcutsHelp((s) => !s);
-      } else if (e.key === 'Escape') {
+      } else if (e.key === 'Escape' || e.key === 'Backspace' || e.key === 'GoBack' || keyCode === 4) {
         if (showShortcutsHelp) setShowShortcutsHelp(false);
         else if (showAudioSubMenu) setShowAudioSubMenu(false);
         else if (showWatchParty) setShowWatchParty(false);
@@ -2102,6 +1980,8 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
     }
     const orientation = (screen as Screen & { orientation?: { unlock?: () => void } }).orientation;
     orientation?.unlock?.();
+    setExpandedPlayer(false);
+    setIsFullscreen(false);
     onClose();
   };
 
@@ -2109,6 +1989,8 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
   const activeSubObj = item.subtitleTracks.find((s) => s.id === activeSubtitleId);
   const controlsVisible = showControls || !playing || showAudioSubMenu || showWatchParty || showShortcutsHelp || showQualityDashboard || showQualityMenu;
   const hideCursor = !controlsVisible;
+  const isCover = videoFitMode === 'cover';
+  const videoFitClass = isCover ? 'object-cover' : 'object-contain';
 
   return (
     <MasterClockProvider clock={masterClockRef.current}>
@@ -2122,7 +2004,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
           audioControllerRef.current?.resumeAudioContext();
           resetControlsTimer();
         }}
-        className={`player-shell fixed inset-0 bg-black flex flex-col justify-between select-none overflow-hidden safe-top safe-bottom ${hideCursor ? 'hide-cursor cursor-none' : ''} ${expandedPlayer ? 'player-landscape z-[100]' : 'z-50'}`}
+        className={`player-shell fixed inset-0 w-full h-full bg-black flex flex-col justify-between select-none overflow-hidden ${hideCursor ? 'hide-cursor cursor-none' : ''} ${expandedPlayer ? 'player-landscape z-[100]' : 'z-50'}`}
       >
       {fullscreenError && <div role="status" className="absolute top-20 left-4 right-4 z-[60] rounded bg-black/90 p-3 text-center text-sm text-white">{fullscreenError}</div>}
 
@@ -2153,7 +2035,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
             onPointerMove={resetControlsTimer}
             onClick={handleVideoClick}
             onDoubleClick={handleVideoDoubleClick}
-            className={`absolute inset-0 w-full h-full object-contain bg-black ${hideCursor ? 'cursor-none' : 'cursor-pointer'} ${
+            className={`absolute inset-0 w-full h-full ${videoFitClass} bg-black ${hideCursor ? 'cursor-none' : 'cursor-pointer'} ${
               useWebCodecsCanvas ? 'block' : 'hidden'
             }`}
           />
@@ -2179,6 +2061,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
               setPlaying(false);
               setShowControls(true);
             }}
+            onPlaying={() => { metricsRef.current?.('start'); }}
             onLoadedMetadata={(e) => {
               if (useWebCodecsCanvas) return;
               const v = e.currentTarget;
@@ -2198,6 +2081,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
               }
             }}
             onWaiting={() => {
+              metricsRef.current?.('waiting');
               if (!useWebCodecsCanvas) setIsBuffering(true);
             }}
             onCanPlay={() => {
@@ -2217,7 +2101,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
               const episodeId = (item as unknown as { episode_id?: string }).episode_id;
               if (v.duration && v.currentTime >= v.duration - 30 && !showNextEpisodeCountdown && episodeId) {
                 // Fetch next episode
-                fetch(`/api/media/next-episode/${episodeId}`)
+                fetch(apiUrl(`/api/media/next-episode/${episodeId}`))
                   .then(r => r.ok ? r.json() : null)
                   .then(next => {
                     if (next) {
@@ -2241,6 +2125,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
               }
             }}
             onEnded={() => {
+              metricsRef.current?.('ended');
               if (useWebCodecsCanvas) return;
               // If we have a next episode queued, navigate immediately
               if (nextEpisodeItem) {
@@ -2248,6 +2133,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
               }
             }}
             onError={() => {
+              metricsRef.current?.('error');
               if (useWebCodecsCanvas) return;
               // If using HLS and it fails, try direct stream
               if (shouldUseHls && !hlsError) {
@@ -2266,8 +2152,8 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
                 setAudioStatusNote('Reconectando stream automaticamente...');
                 return;
               }
-              // Fallback to WebCodecs + WASM MKV Canvas Engine (for iOS Chrome/Safari & macOS Safari!)
-              if (typeof window !== 'undefined' && 'VideoDecoder' in window) {
+              // Fallback to WebCodecs + WASM MKV Canvas Engine (for iOS Chrome/Safari & macOS Safari, NOT Smart TV)
+              if (!isTvOrAndroidNative() && typeof window !== 'undefined' && 'VideoDecoder' in window) {
                 setUseWebCodecsCanvas(true);
                 setAudioStatusNote('Motor WebCodecs + WASM MKV ativado (Compatibilidade iOS / Safari)');
                 return;
@@ -2277,7 +2163,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
                 'O arquivo .MKV usa codec HEVC/Dolby exclusivo ou está concluindo sincronização.'
               );
             }}
-            className={`absolute inset-0 w-full h-full object-contain bg-black ${hideCursor ? 'cursor-none' : 'cursor-pointer'} ${
+            className={`absolute inset-0 w-full h-full ${videoFitClass} bg-black ${hideCursor ? 'cursor-none' : 'cursor-pointer'} ${
               useWebCodecsCanvas ? 'hidden' : 'block'
             }`}
           />
@@ -2446,9 +2332,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
         <div className="player-skip-intro absolute bottom-24 sm:bottom-28 right-4 md:right-12 z-30 animate-fadeIn safe-right safe-bottom">
           <button
             onClick={() => {
-              const detectedIntroEnd = (window as any).__detectedIntroEnd;
-              const targetTime = detectedIntroEnd ? detectedIntroEnd : 88;
-              skipSeconds(targetTime - currentTime);
+              if (typeof introEnd === 'number') handleSeek(introEnd);
             }}
             className="bg-black/75 hover:bg-white hover:text-black text-white border-2 border-white/80 font-bold text-xs md:text-sm px-4 sm:px-5 py-2 sm:py-2.5 rounded shadow-2xl transition tracking-wide uppercase cursor-pointer touch-target tap-highlight"
           >
@@ -2458,15 +2342,13 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
       )}
 
       {/* Skip Outro Button (appears near end) */}
-      {playing && !showAudioSubMenu && !showWatchParty && duration && currentTime > (duration - 180) && (
+      {playing && !showAudioSubMenu && !showWatchParty && typeof item.credits_start_seconds === 'number'
+        && item.credits_start_seconds > currentTime && item.credits_start_seconds < duration
+        && currentTime >= item.credits_start_seconds - 10 && (
         <div className="player-skip-outro absolute bottom-24 sm:bottom-28 left-4 md:left-12 z-30 animate-fadeIn safe-left safe-bottom">
           <button
             onClick={() => {
-              const detectedOutroStart = (window as any).__detectedOutroStart;
-              const targetTime = detectedOutroStart ? detectedOutroStart : duration - 60;
-              if (targetTime > currentTime) {
-                skipSeconds(targetTime - currentTime);
-              }
+              if (typeof item.credits_start_seconds === 'number') handleSeek(item.credits_start_seconds);
             }}
             className="bg-black/75 hover:bg-white hover:text-black text-white border-2 border-white/80 font-bold text-xs md:text-sm px-4 sm:px-5 py-2 sm:py-2.5 rounded shadow-2xl transition tracking-wide uppercase cursor-pointer touch-target tap-highlight"
           >
@@ -2570,7 +2452,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
                 }}
                 className="flex items-center gap-1.5 bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-600 text-white font-semibold text-xs sm:text-sm px-3.5 py-2.5 rounded transition cursor-pointer touch-target-sm tap-highlight"
               >
-                <Subtitles className="w-4 h-4 shrink-0" />
+                <Languages className="w-4 h-4 shrink-0" />
                 <span>Áudio e Legendas</span>
               </button>
             </div>
@@ -2647,7 +2529,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
             aria-expanded={showAudioSubMenu}
             title="Opções de Áudio e Legendas"
           >
-            <Subtitles className="w-4 h-4 shrink-0" />
+            <Languages className="w-4 h-4 shrink-0" />
             <span className="hidden sm:inline">Áudio e Legendas</span>
           </button>
 
@@ -2685,7 +2567,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
               <div className="min-w-0">
                 <h3 className="text-sm font-bold truncate">Watch Party & Controle Remoto TV</h3>
                 <p className="text-[11px] text-zinc-400 truncate">
-                  Powered by Cloudflare Durable Objects (WebSockets na Edge)
+                  Sala compartilhada · atualizações a cada 5 segundos
                 </p>
               </div>
             </div>
@@ -3193,25 +3075,49 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
             >
               {playbackRate}x
             </button>
-          </div>
 
-          <div className="player-secondary-actions flex items-center gap-1.5 sm:gap-3 md:gap-5">
-            {/* Official Netflix Audio & Subtitles Trigger */}
+            {/* Official Netflix Audio & Subtitles Trigger (Icon Only, on same line as play/pause) */}
             <button
-              aria-label="Áudio e Legendas"
+              type="button"
+              aria-label="Idiomas e Legendas"
+              title="Idiomas e Legendas"
               onClick={() => {
                 setShowAudioSubMenu((s) => !s);
                 setShowWatchParty(false);
               }}
-              className={`flex items-center justify-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-1.5 rounded text-xs md:text-sm font-semibold transition cursor-pointer touch-target-sm sm:touch-target tap-highlight ${
+              className={`flex items-center justify-center transition cursor-pointer touch-target-sm sm:touch-target tap-highlight p-1.5 sm:p-2 rounded ${
                 showAudioSubMenu
-                  ? 'bg-[#E50914] text-white'
-                  : 'bg-zinc-800/90 hover:bg-zinc-700 text-white border border-zinc-600'
+                  ? 'bg-[#E50914] text-white shadow-lg'
+                  : 'text-zinc-200 hover:text-white hover:bg-zinc-800'
               }`}
             >
-              <Subtitles className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
-              <span className="hidden min-[420px]:inline">Áudio e Legendas</span>
-              <span className="min-[420px]:hidden">Idiomas</span>
+              <Languages className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
+            </button>
+          </div>
+
+          <div className="player-secondary-actions flex items-center gap-1.5 sm:gap-3 md:gap-5">
+            {/* Aspect Ratio / Fit Screen Toggle */}
+            <button
+              type="button"
+              onClick={toggleFitMode}
+              className={`flex items-center justify-center transition cursor-pointer touch-target-sm sm:touch-target tap-highlight p-1.5 rounded ${
+                isCover ? 'text-[#E50914]' : 'text-zinc-200 hover:text-white'
+              }`}
+              title={isCover ? 'Ajustar à tela original' : 'Preencher tela inteira'}
+              aria-label={isCover ? 'Ajustar à tela original' : 'Preencher tela inteira'}
+            >
+              <Sparkles className="w-4 h-4 sm:w-5 sm:h-5" />
+            </button>
+
+            {/* Fullscreen Toggle */}
+            <button
+              type="button"
+              onClick={toggleFullscreen}
+              className="text-zinc-200 hover:text-white flex items-center justify-center transition cursor-pointer touch-target-sm sm:touch-target tap-highlight p-1.5 rounded"
+              title={isFullscreen ? 'Sair da tela cheia (F)' : 'Tela cheia (F)'}
+              aria-label={isFullscreen ? 'Sair da tela cheia' : 'Tela cheia'}
+            >
+              {isFullscreen ? <Minimize className="w-4 h-4 sm:w-5 sm:h-5" /> : <Maximize className="w-4 h-4 sm:w-5 sm:h-5" />}
             </button>
 
             {/* Cast / AirPlay */}

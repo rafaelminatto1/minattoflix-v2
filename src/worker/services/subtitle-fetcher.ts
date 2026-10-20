@@ -225,66 +225,7 @@ export async function autoFetchSubtitlesForMovie(
     }
   }
 
-  // 3. Fallback: If no external PT-BR track was found, generate via Workers AI or sync intro
-  const hasPtFinal = results.some((r) => r.languageCode === 'pt-BR');
-  if (!hasPtFinal) {
-    let generatedVtt = '';
-    if (aiBinding) {
-      try {
-        const aiRes = (await aiBinding.run('@cf/meta/llama-3.1-8b-instruct', {
-          messages: [
-            {
-              role: 'system',
-              content:
-                'Você é um gerador profissional de legendas WebVTT para cinema. Gere APENAS um arquivo WEBVTT válido (começando com WEBVTT) em Português do Brasil com 10 blocos de legendas numerados de 1 a 10 distribuídos entre 00:00:01.000 e 00:02:00.000.',
-            },
-            {
-              role: 'user',
-              content: `Gere a legenda WebVTT em Português (pt-BR) para o filme "${title}" (${originalTitle || title}, ${year || 2025}). Sinopse: ${overview}`,
-            },
-          ],
-          max_tokens: 900,
-        })) as { response?: string };
-
-        if (aiRes?.response) {
-          const cleaned = aiRes.response
-            .replace(/```[a-z]*\n?/gi, '')
-            .replace(/```/g, '')
-            .trim();
-          const vtt = convertToWebVtt(cleaned, 'vtt');
-          if (vtt.includes('-->')) {
-            generatedVtt = vtt;
-          }
-        }
-      } catch {
-        // Fallback below
-      }
-    }
-
-    if (!generatedVtt) {
-      generatedVtt = `WEBVTT
-
-1
-00:00:01.000 --> 00:00:06.500
-[${cleanReleaseTitle(title)} (${year || 2025}) — Legenda Sincronizada MinattoFlix]
-
-2
-00:00:07.000 --> 00:00:14.500
-${(overview || 'Áudio Multicanal 5.1 Surround Ativo.').slice(0, 120)}...
-
-3
-00:00:15.000 --> 00:00:24.000
-♪ [Trilha Sonora Principal em 5.1 Surround] ♪
-`;
-    }
-
-    results.push({
-      languageCode: 'pt-BR',
-      label: 'Português (Brasil) [Sincronizada • MinattoFlix]',
-      vttContent: generatedVtt,
-      providerName: aiBinding ? 'Cloudflare-Workers-AI' : 'Cloudflare-R2',
-    });
-  }
+  // Never invent dialogue when no authentic subtitle was found.
 
   return {
     imdbId,

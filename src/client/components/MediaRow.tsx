@@ -126,16 +126,30 @@ export const MediaRow: React.FC<MediaRowProps> = ({
             <div
               key={item.id}
               onMouseEnter={() => prewarmStream(item)}
-              className="media-card group/card relative flex-shrink-0 w-[152px] min-[390px]:w-[168px] sm:w-[190px] md:w-[220px] lg:w-[240px] xl:w-[260px] rounded-md bg-[#181818] overflow-hidden shadow-lg transition-all duration-300 sm:hover:scale-105 hover:z-20 hover:shadow-[0_14px_38px_rgba(0,0,0,0.9)] border border-zinc-800/80 hover:border-zinc-600 flex flex-col tap-highlight"
+              className={`media-card group/card relative flex-shrink-0 ${
+                isTop10
+                  ? 'w-[200px] min-[390px]:w-[220px] sm:w-[250px] md:w-[280px] flex items-center'
+                  : 'w-[152px] min-[390px]:w-[168px] sm:w-[190px] md:w-[220px] lg:w-[240px] xl:w-[260px]'
+              } rounded-md bg-[#181818] overflow-hidden shadow-lg transition-all duration-300 sm:hover:scale-105 hover:z-20 hover:shadow-[0_14px_38px_rgba(0,0,0,0.9)] border border-zinc-800/80 hover:border-zinc-600 flex flex-col tap-highlight card-hover-glow`}
             >
+              {isTop10 && idx < 10 && (
+                <div className="absolute left-[-15px] sm:left-[-20px] bottom-4 z-20 pointer-events-none select-none">
+                  <span className="top10-number font-netflix-logo drop-shadow-[0_8px_16px_rgba(0,0,0,0.95)]">
+                    {idx + 1}
+                  </span>
+                </div>
+              )}
               {/* Thumbnail / Poster Area */}
               <button
                 type="button"
                 aria-label={`Assistir ${item.title}`}
                 disabled={!primaryFile}
-                onFocus={() => prewarmStream(item)}
+                onFocus={(e) => {
+                  prewarmStream(item);
+                  e.currentTarget.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+                }}
                 onClick={() => onPlay(item)}
-                className="relative aspect-[2/3] w-full overflow-hidden bg-zinc-900 cursor-pointer tap-highlight"
+                className="relative aspect-[2/3] w-full overflow-hidden bg-zinc-900 cursor-pointer tap-highlight focus-visible:ring-4 focus-visible:ring-[#E50914]"
               >
                 <img
                   src={item.poster_url}

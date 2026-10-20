@@ -1,5 +1,6 @@
 import { Hono, type Context } from 'hono';
 import { getDb, type Env } from '../db';
+import { restrictedCosts } from '../services/cost-policy';
 import { fetchGDriveStream } from '../services/gdrive';
 import { fetchOneDriveStream, resolveOneDriveDownloadUrl } from '../services/onedrive';
 import {
@@ -76,9 +77,14 @@ const headChunkMemoryCache = new Map<string, HeadChunkEntry>();
 const headChunkInflight = new Set<string>();
 
 function setMemoryHeadChunk(fileId: string, bytes: Uint8Array, totalSize: number) {
-  if (headChunkMemoryCache.size >= 30 && !headChunkMemoryCache.has(fileId)) {
-    const oldestKey = headChunkMemoryCache.keys().next().value;
-    if (oldestKey) headChunkMemoryCache.delete(oldestKey);
+  const maximumBytes = 48 * 1024 * 1024;
+  if (bytes.byteLength > maximumBytes) return;
+  headChunkMemoryCache.delete(fileId);
+  let used = [...headChunkMemoryCache.values()].reduce((sum, entry) => sum + entry.bytes.byteLength, 0);
+  for (const [key, entry] of headChunkMemoryCache) {
+    if (used + bytes.byteLength <= maximumBytes && headChunkMemoryCache.size < 30) break;
+    used -= entry.bytes.byteLength;
+    headChunkMemoryCache.delete(key);
   }
   headChunkMemoryCache.set(fileId, {
     bytes,
@@ -159,6 +165,10 @@ interface MediaFileMeta {
 }
 
 export const streamRoutes = new Hono<{ Bindings: Env }>();
+streamRoutes.use('/api/stream/hls/*', async (c, next) => {
+  if (restrictedCosts(c.env)) return c.json({ error: 'HLS dinâmico indisponível. Use o arquivo original ou uma cópia MP4 preparada localmente.' }, 409);
+  await next();
+});
 
 const mediaFileMetaCache = new Map<string, MediaFileMeta>();
 

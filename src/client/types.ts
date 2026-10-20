@@ -110,6 +110,9 @@ export interface SeasonItem {
 }
 
 export interface MediaItem {
+  intro_start_seconds?: number | null;
+  intro_end_seconds?: number | null;
+  credits_start_seconds?: number | null;
   id: string;
   type: 'movie' | 'series';
   created_at?: string;

@@ -58,8 +58,8 @@ video::cue {
 
 /* Touch targets (Apple HIG / Material Design) */
 .touch-target { min-height: 44px; min-width: 44px; }
-.touch-target-sm { min-height: 36px; min-width: 36px; }
-.touch-target-inline { min-height: 36px; }
+.touch-target-sm { min-height: 44px; min-width: 44px; }
+.touch-target-inline { min-height: 44px; }
 
 /* Improved tap highlight for mobile browsers */
 .tap-highlight { -webkit-tap-highlight-color: rgba(229, 9, 20, 0.25); }
@@ -154,7 +154,29 @@ button:disabled { cursor: default; opacity: .5; }
 footer.safe-bottom { --safe-bottom-space: 6rem; }
 .player-top-bar { --safe-top-space: 1rem; }
 .player-bottom-bar { --safe-bottom-space: 1rem; }
-.player-shell { height: 100%; height: 100dvh; }
+.player-shell {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  width: 100dvw;
+  height: 100vh;
+  height: 100dvh;
+  margin: 0;
+  padding: 0 !important;
+}
+/* Ensure video and canvas fill screen completely when cover mode is requested */
+.player-shell video.object-cover,
+.player-shell canvas.object-cover {
+  object-fit: cover !important;
+  object-position: center !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+.player-shell video.object-contain,
+.player-shell canvas.object-contain {
+  object-fit: contain !important;
+  object-position: center !important;
+}
 /* YouTube-like cursor hiding when player controls are hidden (fullscreen & desktop) */
 .player-shell.hide-cursor,
 .player-shell.hide-cursor * {
@@ -193,20 +215,23 @@ footer.safe-bottom { --safe-bottom-space: 6rem; }
   .player-shell button { min-height: 44px; min-width: 44px; }
 }
 @media (max-width: 639px) {
-  .player-toolbar { flex-wrap: wrap; gap: .5rem; }
-  .player-primary-actions, .player-secondary-actions { width: 100%; justify-content: space-between; gap: .25rem; }
+  .player-toolbar { flex-wrap: nowrap; gap: .375rem; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .player-toolbar::-webkit-scrollbar { display: none; }
+  .player-primary-actions { width: auto; flex: 1; min-width: 0; justify-content: flex-start; gap: .375rem; flex-wrap: nowrap; }
+  .player-secondary-actions { width: auto; flex-shrink: 0; justify-content: flex-end; gap: .375rem; flex-wrap: nowrap; }
   .player-options {
-    bottom: calc(10rem + env(safe-area-inset-bottom, 0px));
-    max-height: calc(100dvh - 15rem - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px));
+    max-height: calc(100dvh - 7rem - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
     overscroll-behavior: contain;
   }
   .player-top-bar { --safe-top-space: .75rem; }
   .player-shell input[type="range"] { min-height: 44px; }
 }
 @media (max-height: 500px) and (orientation: landscape) {
-  .player-primary-actions, .player-secondary-actions { gap: .25rem; }
+  .player-toolbar { flex-wrap: nowrap; }
+  .player-primary-actions, .player-secondary-actions { width: auto; gap: .25rem; flex-wrap: nowrap; }
   .player-bottom-bar { --safe-inline-space: 1rem; --safe-bottom-space: .5rem; padding-top: .75rem; }
-  .player-options { bottom: calc(6rem + env(safe-area-inset-bottom, 0px)); max-height: calc(100dvh - 7rem - env(safe-area-inset-bottom, 0px)); }
+  .player-options { bottom: calc(4.5rem + env(safe-area-inset-bottom, 0px)); max-height: calc(100dvh - 5.5rem - env(safe-area-inset-bottom, 0px)); }
   .player-toolbar input[aria-label="Volume"] { width: 3rem; }
   .player-toolbar button[title="Iniciar do começo"],
   .player-toolbar button[title="Picture-in-Picture"] { display: none; }
@@ -223,4 +248,63 @@ footer.safe-bottom { --safe-bottom-space: 6rem; }
     height: 100dvw;
     transform: translate(-50%, -50%) rotate(90deg);
   }
+}
+
+/* ==========================================================================
+   10-FOOT TV UI & D-PAD FOCUS STYLES (Google TV / Android TV / Apple TV)
+   ========================================================================== */
+:focus-visible,
+.tv-focused {
+  outline: none !important;
+  transform: scale(1.08) !important;
+  border: 3px solid #e50914 !important;
+  box-shadow: 0 0 25px rgba(229, 9, 20, 0.85), 0 0 10px rgba(255, 255, 255, 0.4) !important;
+  z-index: 40 !important;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), border 0.2s ease, box-shadow 0.2s ease !important;
+}
+
+/* Permitir rolagem por foco na TV sem barras de rolagem */
+@media (hover: none) and (pointer: coarse), (tv) {
+  *:focus-visible {
+    scroll-margin: 80px;
+  }
+}
+
+/* ==========================================================================
+   NETFLIX GLASS & SHIMMER UI UTILITIES
+   ========================================================================== */
+.glass-panel {
+  background: rgba(24, 24, 24, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.card-hover-glow {
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s ease, border-color 0.3s ease;
+}
+.card-hover-glow:hover {
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.8), 0 0 20px rgba(229, 9, 20, 0.3);
+  border-color: rgba(229, 9, 20, 0.6);
+}
+
+/* Shimmer placeholder for lazy loaded media */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.shimmer-skeleton {
+  background: linear-gradient(90deg, #1f1f1f 25%, #2a2a2a 50%, #1f1f1f 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.8s infinite;
+}
+
+/* Top 10 Netflix Big Number Styling */
+.top10-number {
+  font-family: 'Bebas Neue', Impact, sans-serif;
+  font-size: 5.5rem;
+  line-height: 0.8;
+  color: #141414;
+  -webkit-text-stroke: 4px #595959;
+  text-shadow: 0 4px 12px rgba(0,0,0,0.9);
 }

@@ -179,28 +179,15 @@ subtitlesRoutes.get('/api/subtitles/:subIdFile', async (c) => {
     }
   }
 
-  const titleName = String(sub.title || sub.filename || 'MinattoFlix');
-  const defaultVtt = `WEBVTT
+  return new Response('WEBVTT\n\n', { status: 404, headers: { 'Content-Type': 'text/vtt; charset=utf-8' } });
 
-1
-00:00:01.000 --> 00:00:06.500
-[MinattoFlix Cloud Stream • ${titleName}]
-[${sub.label}]
-
-2
-00:00:07.000 --> 00:00:14.000
-♪ [Áudio Multicanal 5.1 Surround Ativo] ♪
-`;
-
-  return new Response(defaultVtt, {
-    headers: { 'Content-Type': 'text/vtt; charset=utf-8', 'Access-Control-Allow-Origin': '*' },
-  });
 });
 
 /**
  * POST /api/ai/translate-subtitle - Generate/translate subtitles with Workers AI
  */
 subtitlesRoutes.post('/api/ai/translate-subtitle', async (c) => {
+  if (!c.env.AI) return c.json({ error: 'Tradução por IA desativada. Envie uma legenda existente.' }, 409);
   const sql = getDb(c.env);
   const body = await c.req.json<{
     mediaFileId: string;

@@ -5,9 +5,12 @@ import { Navbar, type NavSection } from './components/Navbar';
 import { HeroBillboard } from './components/HeroBillboard';
 import { MediaRow } from './components/MediaRow';
 import { NetflixPlayer } from './components/NetflixPlayer';
+import {Capacitor} from '@capacitor/core';
+const NativePlayback=lazy(()=>import('./components/NativePlayback').then(module=>({default:module.NativePlayback})));
 const DetailModal = lazy(() => import('./components/DetailModal').then(module => ({ default: module.DetailModal })));
 const CloudManagerModal = lazy(() => import('./components/CloudManagerModal').then(module => ({ default: module.CloudManagerModal })));
 import { addedTime, matchesSearch, preferredFile, prewarmStream, qualityLabel, requestJson } from './services/catalog';
+import { isIosWebKit } from './services/mkvAudioController';
 import { Cloud, Play, Info, Languages, Subtitles, RefreshCw, SlidersHorizontal } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -39,6 +42,8 @@ export const App: React.FC = () => {
     item: MediaItem;
     audioId?: string;
     subtitleId?: string;
+    fileId?: string;
+    webFallback?: boolean;
   } | null>(null);
   const [showCloudStudio, setShowCloudStudio] = useState<boolean>(false);
 
@@ -96,14 +101,16 @@ export const App: React.FC = () => {
     } catch (error) { setError(error instanceof Error ? error.message : 'Falha ao carregar detalhes.'); }
     finally { if (requestId === detailRequestRef.current) setDetailLoading(false); }
   };
-  const openPlayer = async (item: MediaItem, audioId?: string, subtitleId?: string, episode?: EpisodeItem) => {
+  const openPlayer = async (item: MediaItem, audioId?: string, subtitleId?: string, episode?: EpisodeItem, fileId?: string) => {
     prewarmStream(episode || item);
     // Automatically enter fullscreen on both desktop and mobile devices within the synchronous user gesture
     const doc = document as Document & { webkitFullscreenElement?: Element | null };
     const rootEl = document.documentElement as HTMLElement & {
       webkitRequestFullscreen?: () => Promise<void> | void;
     };
-    if (!doc.fullscreenElement && !doc.webkitFullscreenElement) {
+    // WKWebView identifies its bundled page as localhost. Use the player's
+    // immersive layout on iOS instead of requesting browser fullscreen here.
+    if (!isIosWebKit() && !doc.fullscreenElement && !doc.webkitFullscreenElement) {
       if (rootEl.requestFullscreen) {
         rootEl.requestFullscreen().catch(() => {});
       } else if (rootEl.webkitRequestFullscreen) {
@@ -125,7 +132,7 @@ export const App: React.FC = () => {
     // Fast-path: if playing a movie (not a specific episode) and files are already hydrated from bootstrap, open in 0ms!
     if (!episode && item.type !== 'series' && item.files.length > 0) {
       setDetailItemId(null);
-      setPlayerState({ item, audioId, subtitleId });
+      setPlayerState({ item, audioId, subtitleId, fileId });
       return;
     }
     const requestId = ++detailRequestRef.current;
@@ -137,7 +144,7 @@ export const App: React.FC = () => {
         audioTracks: episode.files.flatMap(file => file.audioTracks), subtitleTracks: episode.files.flatMap(file => file.subtitleTracks), progress: null } : detail;
       if (!playable.files.length) throw new Error('Este título ainda não tem um arquivo de vídeo disponível. Sincronize o catálogo.');
       setDetailItemId(null);
-      setPlayerState({ item: playable, audioId, subtitleId });
+      setPlayerState({ item: playable, audioId, subtitleId, fileId });
     } catch (error) { 
       const msg = error instanceof Error ? error.message : 'Falha ao abrir vídeo.';
       setError(msg);
@@ -265,7 +272,7 @@ export const App: React.FC = () => {
     () =>
       profileFilteredCatalog.filter(
         (m) => m.progress && m.progress.position_seconds > 5 && !m.progress.is_completed
-      ),
+      ).sort((a, b) => (Date.parse(b.progress?.updated_at || '') || 0) - (Date.parse(a.progress?.updated_at || '') || 0)),
     [profileFilteredCatalog]
   );
 
@@ -499,7 +506,7 @@ export const App: React.FC = () => {
                   <div
                     key={item.id}
                     onMouseEnter={() => prewarmStream(item)}
-                    className="catalog-grid-card group bg-[#181818] border border-zinc-800 hover:border-zinc-600 rounded-md overflow-hidden flex flex-col transition-transform duration-300 sm:hover:scale-105 shadow-xl tap-highlight"
+                    className="catalog-grid-card group bg-[#181818] border border-zinc-800 hover:border-zinc-600 rounded-md overflow-hidden flex flex-col transition-transform duration-300 sm:hover:scale-105 shadow-xl tap-highlight card-hover-glow"
                   >
                     <button
                       type="button"
@@ -525,6 +532,14 @@ export const App: React.FC = () => {
                         <span className="absolute top-2 right-2 bg-black/80 border border-white/30 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
                           {qualityLabel(f)}
                         </span>
+                      )}
+                      {item.progress && item.progress.duration_seconds > 0 && (
+                        <div className="absolute bottom-0 inset-x-0 h-1.5 bg-zinc-700/80">
+                          <div
+                            className="h-full bg-[#E50914] transition-all"
+                            style={{ width: `${Math.min(100, Math.round((item.progress.position_seconds / item.progress.duration_seconds) * 100))}%` }}
+                          />
+                        </div>
                       )}
                     </button>
                     <div className="p-2.5 sm:p-3 flex-1 flex flex-col justify-between">
@@ -725,11 +740,19 @@ export const App: React.FC = () => {
 
       {/* Fullscreen Netflix Video Player */}
       {playerState && (
-        <NetflixPlayer
+        Capacitor.getPlatform()==='ios' && !playerState.webFallback ?
+        <Suspense fallback={<div role="status" className="fixed inset-0 z-[100] bg-black text-white p-8 safe-top">Abrindo player…</div>}>
+          <NativePlayback key={`${playerState.item.id}:${playerState.fileId||''}`}
+            item={playerState.item} activeProfile={activeProfile} initialFileId={playerState.fileId}
+            initialAudioId={playerState.audioId} initialSubtitleId={playerState.subtitleId}
+            onClose={()=>setPlayerState(null)} onFallback={()=>setPlayerState(previous=>previous?{...previous,webFallback:true}:null)}
+            onSaveProgress={handleSaveProgress}/>
+        </Suspense> : <NetflixPlayer
           item={playerState.item}
           activeProfile={activeProfile}
           initialAudioId={playerState.audioId}
           initialSubtitleId={playerState.subtitleId}
+          initialFileId={playerState.fileId}
           onClose={() => setPlayerState(null)}
           onSaveProgress={handleSaveProgress}
           onRefreshCatalog={async () => {

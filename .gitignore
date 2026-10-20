@@ -21,3 +21,4 @@ ios/App/CapApp-SPM/.build/
 *.p12
 *.p8
 *.mobileprovision
+__pycache__/

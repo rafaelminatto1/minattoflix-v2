@@ -9,6 +9,18 @@ export function isIosWebKit(): boolean {
   return /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 }
 
+export function isCapacitorNative(): boolean {
+  if (typeof window === 'undefined') return false;
+  return Boolean((window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
+}
+
+export function isTvOrAndroidNative(): boolean {
+  if (typeof window === 'undefined') return false;
+  if (isCapacitorNative() && !isIosWebKit()) return true;
+  const ua = navigator.userAgent || '';
+  return /GoogleTV|AndroidTV|SmartTV|TCL|Appletv|HbbTV|CrKey|NetCast/i.test(ua);
+}
+
 // Download the Dolby decoder only when an actual Dolby track needs it.
 let decoderRegistration: Promise<void> | undefined;
 export function ensureDolbyDecoder() {
@@ -32,6 +44,7 @@ export interface MediabunnyTrackSummary {
  * inside .mkv, .webm, or .mp4 containers directly from the Cloudflare Worker stream URL.
  */
 export async function inspectStreamWithMediabunny(streamUrl: string): Promise<MediabunnyTrackSummary[]> {
+  if (isTvOrAndroidNative()) return [];
   let input: Input | null = null;
   try {
     const absoluteUrl = streamUrl.startsWith('http') ? streamUrl : `${window.location.origin}${streamUrl}`;
@@ -145,6 +158,7 @@ export class HybridAudioSyncController {
   }
 
   public notifyClockPlay() {
+    if (this.isMediaPaused()) return;
     this.handlePlay();
     this.handlePlaying();
   }
@@ -742,6 +756,12 @@ export class MkvWebCodecsCanvasPlayer {
   private currentTime = 0;
   private playbackRate = 1;
   private destroyed = false;
+  private waitingForFrame = true;
+  private frameWaitTimer: ReturnType<typeof setTimeout> | undefined;
+
+  public isWaitingForFrame(): boolean {
+    return this.waitingForFrame;
+  }
 
   constructor(
     private canvasEl: HTMLCanvasElement,
@@ -842,6 +862,8 @@ export class MkvWebCodecsCanvasPlayer {
     const ctx2d = this.canvasEl.getContext('2d');
     if (!ctx2d) return;
 
+    this.waitingForFrame = true;
+    clearTimeout(this.frameWaitTimer);
     this.callbacks.onWaiting();
     let anchored = false;
     let baseWallMs = performance.now();
@@ -849,9 +871,10 @@ export class MkvWebCodecsCanvasPlayer {
 
     try {
       for await (const wrapped of this.canvasSink.canvases(baseMediaSec)) {
+        clearTimeout(this.frameWaitTimer);
         if (runId !== this.abortId || this.paused || this.destroyed) break;
 
-        if (!anchored) {
+        if (!anchored || this.waitingForFrame) {
           anchored = true;
           baseWallMs = performance.now();
           baseMediaSec = wrapped.timestamp;
@@ -862,9 +885,14 @@ export class MkvWebCodecsCanvasPlayer {
         const waitMs = targetWallMs - performance.now();
 
         if (waitMs > 4) {
-          await new Promise((r) => setTimeout(r, Math.min(waitMs, 250)));
+          while (targetWallMs - performance.now() > 4) {
+            await new Promise((r) => setTimeout(r, Math.min(targetWallMs - performance.now(), 100)));
+            if (runId !== this.abortId || this.paused || this.destroyed) return;
+          }
           if (runId !== this.abortId || this.paused || this.destroyed) break;
         } else if (waitMs < -180) {
+          this.waitingForFrame = true;
+          this.callbacks.onWaiting();
           // Slow devices must still display decoded frames. Re-anchor rather
           // than dropping every frame and leaving a black canvas with audio.
           baseWallMs = performance.now();
@@ -872,13 +900,25 @@ export class MkvWebCodecsCanvasPlayer {
         }
 
         ctx2d.drawImage(wrapped.canvas, 0, 0, this.canvasEl.width, this.canvasEl.height);
-        this.callbacks.onCanPlay();
         this.canvasEl.dataset.presentedFrames = String(Number(this.canvasEl.dataset.presentedFrames || 0) + 1);
         this.currentTime = wrapped.timestamp;
+        if (this.waitingForFrame) {
+          this.waitingForFrame = false;
+          this.callbacks.onCanPlay();
+        }
         this.callbacks.onTimeUpdate(wrapped.timestamp, wrapped.timestamp + 4);
+        // Silence queued audio while waiting for another decoded frame, not
+        // only after that delayed frame finally arrives.
+        this.frameWaitTimer = setTimeout(() => {
+          if (runId !== this.abortId || this.paused || this.destroyed) return;
+          this.waitingForFrame = true;
+          this.callbacks.onWaiting();
+        }, 250);
       }
+      if (runId === this.abortId) clearTimeout(this.frameWaitTimer);
     } catch (err) {
       if (runId !== this.abortId || this.destroyed) return;
+      clearTimeout(this.frameWaitTimer);
       console.warn('WebCodecs MKV frame pump error:', err);
       this.paused = true;
       this.callbacks.onError(err instanceof Error ? err.message : String(err));
@@ -892,6 +932,7 @@ export class MkvWebCodecsCanvasPlayer {
   }
 
   public pause() {
+    clearTimeout(this.frameWaitTimer);
     this.paused = true;
     this.abortId++;
   }
@@ -912,6 +953,7 @@ export class MkvWebCodecsCanvasPlayer {
   }
 
   public destroy() {
+    clearTimeout(this.frameWaitTimer);
     this.destroyed = true;
     this.abortId++;
     this.canvasSink = null;

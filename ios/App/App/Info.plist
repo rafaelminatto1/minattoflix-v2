@@ -5,7 +5,7 @@
   <key>CAPACITOR_DEBUG</key>
 	<string>$(CAPACITOR_DEBUG)</string>
 	<key>CFBundleDevelopmentRegion</key>
-	<string>en</string>
+	<string>pt_BR</string>
 	<key>CFBundleDisplayName</key>
         <string>MinattoFlix</string>
 	<key>CFBundleExecutable</key>

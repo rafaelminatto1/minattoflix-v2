@@ -30,8 +30,22 @@ export const Navbar: React.FC<NavbarProps> = ({
   totalMovies,
 }) => {
   const headerRef = useRef<HTMLElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [isScrolled, setIsScrolled] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+
+  // Keyboard shortcut (Cmd/Ctrl + K or /) to focus search
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.key === 'k' && (e.metaKey || e.ctrlKey)) || (e.key === '/' && !['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName))) {
+        e.preventDefault();
+        setSearchOpen(true);
+        setTimeout(() => searchInputRef.current?.focus(), 50);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   useEffect(() => {
     const onScroll = () => {
@@ -138,6 +152,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               {(searchOpen || searchQuery) && (
                 <>
                   <input
+                    ref={searchInputRef}
                     type="text"
                     value={searchQuery}
                     onChange={(e) => onSearchChange(e.target.value)}
@@ -256,7 +271,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         aria-label="Navegação rápida móvel"
         className="mobile-navigation sm:hidden fixed bottom-0 inset-x-0 z-40 bg-[#121212]/95 backdrop-blur-lg border-t border-zinc-800/90 safe-bottom safe-left safe-right"
       >
-        <div className="grid grid-cols-6 h-14">
+        <div className="grid grid-cols-6 h-16">
           {navItems.map((item) => {
             const Icon = { home: Home, movies: Film, '4k': Sparkles, dc: Shield, kids: Baby, mylist: Bookmark }[item.id];
             const active = activeSection === item.id && !searchQuery;
@@ -264,8 +279,9 @@ export const Navbar: React.FC<NavbarProps> = ({
               <button key={item.id} type="button" aria-label={item.label} title={item.label}
                 aria-current={active ? 'page' : undefined}
                 onClick={() => { onSelectSection(item.id); onSearchChange(''); }}
-                className={`flex items-center justify-center touch-target tap-highlight transition ${active ? 'text-[#E50914] bg-white/5' : 'text-zinc-400 hover:text-white'}`}>
-                <Icon className="w-6 h-6" aria-hidden="true" />
+                className={`flex flex-col gap-1 items-center justify-center touch-target tap-highlight transition ${active ? 'text-[#E50914] bg-white/5' : 'text-zinc-300 hover:text-white'}`}>
+                <Icon className="w-5 h-5" aria-hidden="true" />
+                <span className="text-[10px] leading-tight font-medium">{{home:'Início',movies:'Filmes','4k':'4K',dc:'Heróis',kids:'Família',mylist:'Minha lista'}[item.id]}</span>
               </button>
             );
           })}

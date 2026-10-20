@@ -25,7 +25,7 @@ for (const ios of [false, true]) {
       exports,
       require(id) {
         if (id === '../hooks/useDialog') return { useDialog: () => React.useRef(null) };
-        if (id === '../services/mkvAudioController') return { isIosWebKit: () => ios };
+        if (id === '../services/mkvAudioController') return { isIosWebKit: () => ios, isTvOrAndroidNative: () => false };
         if (id.startsWith('../services/')) return { apiUrl: (path) => path };
         return require(id);
       },
@@ -71,7 +71,7 @@ test('NetflixPlayer defaults subtitles to off for Portuguese movies and pt-BR fo
     exports,
     require(id) {
       if (id === '../hooks/useDialog') return { useDialog: () => React.useRef(null) };
-      if (id === '../services/mkvAudioController') return { isIosWebKit: () => false };
+      if (id === '../services/mkvAudioController') return { isIosWebKit: () => false, isTvOrAndroidNative: () => false };
       if (id.startsWith('../services/')) return { apiUrl: (path) => path };
       return require(id);
     },

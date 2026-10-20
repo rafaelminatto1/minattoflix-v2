@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">MinattoFlix</string>
+    <string name="title_activity_main">MinattoFlix</string>
+    <string name="package_name">com.rafaelminatto.minattoflix</string>
+    <string name="custom_url_scheme">com.rafaelminatto.minattoflix</string>
+</resources>

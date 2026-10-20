@@ -37,3 +37,20 @@ test('failed requests reject instead of announcing success', async () => {
     assert.deepEqual(await requestJson('/api/test'), { ok: true });
   } finally { globalThis.fetch = original; }
 });
+
+test('concurrent catalog consumers receive independent response bodies', async t => {
+ let finish; let calls=0;
+ t.mock.method(globalThis,'fetch',()=>{calls++;return new Promise(resolve=>{finish=resolve;});});
+ const first=requestJson('/api/concurrent');
+ const second=requestJson('/api/concurrent');
+ finish(Response.json({ok:true}));
+ assert.deepEqual(await Promise.all([first,second]),[{ok:true},{ok:true}]);
+ assert.equal(calls,1);
+});
+
+test('independent cancellation signals cannot abort another consumer', async t => {
+ let calls=0;
+ t.mock.method(globalThis,'fetch',async ()=>{calls++;return Response.json({ok:true});});
+ await Promise.all([requestJson('/api/cancel',{signal:new AbortController().signal}),requestJson('/api/cancel',{signal:new AbortController().signal})]);
+ assert.equal(calls,2);
+});

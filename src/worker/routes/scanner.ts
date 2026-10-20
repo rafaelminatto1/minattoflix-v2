@@ -12,6 +12,7 @@ import { autoFetchSubtitlesForMovie } from '../services/subtitle-fetcher';
 import { fetchGDriveStream } from '../services/gdrive';
 import { fetchOneDriveStream } from '../services/onedrive';
 import { warmAllMovieHeadChunks } from './stream';
+import { enqueueTask } from '../services/task-queue';
 
 export { warmAllMovieHeadChunks };
 export const scannerRoutes = new Hono<{ Bindings: Env }>();
@@ -28,6 +29,7 @@ export async function executeCloudScannerSync(env: Env) {
   let discoveredFolders = 0;
   let syncedVideos = 0;
   let syncedExternalTracks = 0;
+  let failedSources = 0;
   const logs: string[] = [];
 
   for (const source of sources) {
@@ -44,6 +46,7 @@ export async function executeCloudScannerSync(env: Env) {
         bundles = await scanOneDriveSharedFolder(shareUrl, env.MINATTO_KV);
       }
     } catch (err) {
+      failedSources++;
       logs.push(`Aviso ao escanear ${source.name}: ${err instanceof Error ? err.message : String(err)}`);
       continue;
     }
@@ -383,13 +386,8 @@ export async function executeCloudScannerSync(env: Env) {
         .filter((row) => !foundExternalFileIds.has(row.externalFileId));
 
       if (toDelete.length > 0) {
-        const idsToDelete = toDelete.map((r) => r.id);
-        // Delete related tracks first (audio_tracks and subtitle_tracks reference media_files)
-        await sql`DELETE FROM audio_tracks WHERE media_file_id = ANY(${idsToDelete})`;
-        await sql`DELETE FROM subtitle_tracks WHERE media_file_id = ANY(${idsToDelete})`;
-        // Then delete the media_files
-        await sql`DELETE FROM media_files WHERE id = ANY(${idsToDelete})`;
-        logs.push(`Limpeza: ${toDelete.length} arquivo(s) removido(s) que não existem mais no ${source.name}`);
+        // Incomplete provider listings must never erase playable catalog data.
+        logs.push(`Verificar: ${toDelete.length} arquivo(s) ausentes na listagem de ${source.name}. Registros preservados.`);
       }
     }
 
@@ -404,6 +402,7 @@ export async function executeCloudScannerSync(env: Env) {
     logs.push(...coverHealing.logs);
   }
 
+  if (failedSources) throw new Error('Uma ou mais fontes falharam; a tarefa precisa ser repetida.');
   return {
     ok: true,
     discoveredFolders,
@@ -473,17 +472,17 @@ export async function healMissingMediaCovers(env: Env, limit = 25): Promise<{ he
 }
 
 scannerRoutes.post('/api/scanner/sync', async (c) => {
-  const result = await executeCloudScannerSync(c.env);
-  c.executionCtx.waitUntil(warmAllMovieHeadChunks(c.env, 10).catch(() => {}));
-  return c.json(result);
+  const task = await enqueueTask(c.env, 'scan');
+  return c.json({ ok: true, queued: true, task, logs: ['Sincronização na fila. O agendador processará com retentativas.'] }, 202);
 });
 
 scannerRoutes.post('/api/scanner/enrich-covers', async (c) => {
-  const result = await healMissingMediaCovers(c.env, 50);
-  return c.json(result);
+  const task = await enqueueTask(c.env, 'covers');
+  return c.json({ ok: true, queued: true, task, logs: ['Atualização de capas na fila.'] }, 202);
 });
 
 scannerRoutes.post('/api/cloudflare/warm-heads', async (c) => {
+  if (!c.env.MEDIA_BUCKET) return c.json({ error: 'Cache R2 desativado para evitar cobrança adicional.' }, 409);
   const result = await warmAllMovieHeadChunks(c.env, 20);
   return c.json(result);
 });

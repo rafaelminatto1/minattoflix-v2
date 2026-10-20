@@ -1,3 +1,4 @@
+import { OperationsPanel } from './OperationsPanel';
 import { apiUrl } from '../services/catalog';
 import { useDialog } from '../hooks/useDialog';
 import React, { useEffect, useState } from 'react';
@@ -248,7 +249,7 @@ export const CloudManagerModal: React.FC<CloudManagerModalProps> = ({
                 MinattoFlix Cloud Studio — Google Drive, OneDrive & Cloudflare
               </h2>
               <p className="text-[11px] sm:text-xs text-zinc-400 truncate">
-                Workers Paid + KV + R2 + Hyperdrive + Workers AI + Durable Objects + Neon PostgreSQL
+                Workers + Neon PostgreSQL · serviços adicionais desativados
               </p>
             </div>
           </div>
@@ -326,11 +327,11 @@ export const CloudManagerModal: React.FC<CloudManagerModalProps> = ({
                   </button>
                   <button
                     onClick={handleWarmHeads}
-                    disabled={warmingHeads || isSyncing}
+                    disabled
                     className="flex items-center justify-center gap-2 bg-zinc-800 hover:bg-zinc-700 border border-amber-500/40 text-amber-300 text-xs font-bold px-3.5 py-2.5 rounded transition cursor-pointer touch-target tap-highlight"
                   >
                     <Zap className={`w-4 h-4 ${warmingHeads ? 'animate-pulse text-amber-400' : 'text-amber-400'}`} />
-                    <span>{warmingHeads ? 'Aquecendo 2 MB no R2...' : 'Pré-Aquecer Inícios no R2 (2 MB)'}</span>
+                    <span>Cache R2 desativado</span>
                   </button>
                   <button
                     onClick={handleTriggerSync}
@@ -338,7 +339,7 @@ export const CloudManagerModal: React.FC<CloudManagerModalProps> = ({
                     className="flex items-center justify-center gap-2 bg-[#E50914] hover:bg-[#b80710] text-white text-xs font-bold px-4 py-2.5 rounded transition cursor-pointer touch-target tap-highlight"
                   >
                     <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
-                    <span>{isSyncing ? 'Escaneando Pastas na Nuvem...' : 'Sincronizar Nuvem Agora'}</span>
+                    <span>{isSyncing ? 'Agendando sincronização…' : 'Agendar sincronização'}</span>
                   </button>
                 </div>
               </div>
@@ -694,97 +695,7 @@ export const CloudManagerModal: React.FC<CloudManagerModalProps> = ({
             </div>
           </div>
         ) : activeTab === 'cloudflare' ? (
-          <div className="p-6 space-y-5 text-xs safe-left safe-right safe-bottom flex-1 overflow-y-auto mobile-modal-content">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="bg-zinc-900/90 border border-zinc-800 rounded-lg p-4 space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-white flex items-center gap-1.5">
-                    <Zap className="w-4 h-4 text-amber-400" /> Cloudflare Workers KV (`MINATTO_KV`)
-                  </span>
-                  <span className="text-emerald-400 font-bold">
-                    {cfStatus?.kvConnected ? '● ATIVO' : '● CONFIGURADO'}
-                  </span>
-                </div>
-                <p className="text-zinc-400">
-                  Cacheia os links diretos resolvidos do Google Drive (`gdrive:dl:*`) por 25 minutos na Edge,
-                  permitindo início de vídeo e avanço (seek) em menos de 100ms.
-                </p>
-              </div>
-
-              <div className="bg-zinc-900/90 border border-zinc-800 rounded-lg p-4 space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-white flex items-center gap-1.5">
-                    <HardDrive className="w-4 h-4 text-sky-400" /> Cloudflare R2 (`minattoflix-media`)
-                  </span>
-                  <span className="text-emerald-400 font-bold">
-                    {cfStatus?.r2Connected ? '● ATIVO' : '● CONFIGURADO'}
-                  </span>
-                </div>
-                <p className="text-zinc-400">
-                  Bucket Object Storage com Zero Egress que armazena os primeiros 2 MB de cada filme (
-                  <code>head-chunks/*.bin</code>) para início instantâneo (~15–40 ms) e legendas <code>.VTT</code>.
-                </p>
-              </div>
-
-              <div className="bg-zinc-900/90 border border-zinc-800 rounded-lg p-4 space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-white flex items-center gap-1.5">
-                    <Database className="w-4 h-4 text-emerald-400" /> Cloudflare Hyperdrive + Neon
-                  </span>
-                  <span className="text-emerald-400 font-bold">
-                    {cfStatus?.hyperdriveConnected ? '● ATIVO' : '● CONFIGURADO'}
-                  </span>
-                </div>
-                <p className="text-zinc-400">
-                  Connection pooling global conectado ao banco PostgreSQL `minattoflix` na região São Paulo
-                  (`sa-east-1`).
-                </p>
-              </div>
-
-              <div className="bg-zinc-900/90 border border-zinc-800 rounded-lg p-4 space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-white flex items-center gap-1.5">
-                    <Sparkles className="w-4 h-4 text-purple-400" /> Cloudflare Workers AI (`Llama 3.1`)
-                  </span>
-                  <span className="text-emerald-400 font-bold">
-                    {cfStatus?.workersAiConnected ? '● ATIVO' : '● CONFIGURADO'}
-                  </span>
-                </div>
-                <p className="text-zinc-400">
-                  Tradução e geração automática de legendas em Português (Brasil) direto pelo botão
-                  "Legenda IA" no player de vídeo.
-                </p>
-              </div>
-
-              <div className="bg-zinc-900/90 border border-zinc-800 rounded-lg p-4 space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-white flex items-center gap-1.5">
-                    <Users className="w-4 h-4 text-[#E50914]" /> Durable Objects (`WatchPartyRoom`)
-                  </span>
-                  <span className="text-emerald-400 font-bold">
-                    {cfStatus?.durableObjectsConnected ? '● ATIVO' : '● CONFIGURADO'}
-                  </span>
-                </div>
-                <p className="text-zinc-400">
-                  Salas WebSocket em tempo real para assistir junto à distância e controlar a TV da sala pelo
-                  celular!
-                </p>
-              </div>
-
-              <div className="bg-zinc-900/90 border border-zinc-800 rounded-lg p-4 space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-white flex items-center gap-1.5">
-                    <Clock className="w-4 h-4 text-amber-300" /> Cloudflare Cron Triggers (`*/5 * * * *`)
-                  </span>
-                  <span className="text-emerald-400 font-bold">● A CADA 5 MIN</span>
-                </div>
-                <p className="text-zinc-400">
-                  Varre automaticamente suas pastas do Google Drive e OneDrive a cada 5 minutos em
-                  background, busca capas faltantes e publica novos filmes `.MKV` sozinho.
-                </p>
-              </div>
-            </div>
-          </div>
+          <OperationsPanel />
         ) : (
           <div className="p-6 space-y-4 text-xs text-zinc-300 leading-relaxed safe-left safe-right safe-bottom flex-1 overflow-y-auto mobile-modal-content">
             <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 space-y-2">
