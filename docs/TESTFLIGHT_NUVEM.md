@@ -64,7 +64,7 @@ Referências:
 - Login de usuário/admin e acesso ao Neon verificados em produção. Os códigos locais estão no arquivo ignorado `.env.minattoflix-access`; nunca versionar seu conteúdo.
 - 68 testes, TypeScript, build web/nativo, compilação Swift, assinatura e upload passaram. A conversão FFmpeg com mídia sintética também passou no CI.
 - Build `1.0 (3)` enviado e processado pela Apple: https://codemagic.io/app/6ad6cdb86a483b360aff08eb/build/6ad7ae98454d2506f7ab8b11
-- A atribuição automática falhou: a API Apple recusou adicionar o build ao grupo interno `MinattoFlix - Teste pessoal` (`Cannot add internal group to a build`). A instalação pelo grupo precisa de confirmação no App Store Connect; o upload e processamento já foram concluídos.
+- A chamada de atribuição do Codemagic falhou: a API Apple recusou adicionar o build ao grupo interno `MinattoFlix - Teste pessoal` (`Cannot add internal group to a build`). A verificação posterior na interface Apple confirmou que o grupo já recebe o build: `1.0 (3)` está **Em testes**, com um testador interno. A Apple registra a versão 1.0 (3) instalada no iPhone 15 do titular em 20/10/2026. Orientações de teste foram salvas no build.
 - Removida essa atribuição incompatível do YAML para os próximos envios. Para o grupo interno, habilitar distribuição automática ou adicionar o build pela interface Apple.
 - Workers + Neon permanece restrito: processamento GitHub, R2 e IA desativados. A preparação de vídeos é local. Sincronismo, interrupções e reprodução precisam de teste físico no iPhone.
 
