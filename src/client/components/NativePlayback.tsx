@@ -27,6 +27,7 @@ export function NativePlayback(props:Props) {
  const started=useRef(false);
  const saveRef=useRef(props.onSaveProgress);saveRef.current=props.onSaveProgress;
  const closeRef=useRef(onClose);closeRef.current=onClose;
+ const fallbackRef=useRef(onFallback);fallbackRef.current=onFallback;
  const [refresh,setRefresh]=useState(0);
 
  useEffect(()=>{
@@ -37,9 +38,14 @@ export function NativePlayback(props:Props) {
    try {
     const next=await requestJson<Status>(`/api/playback/${file.id}`,{signal:controller.signal});
     if(!active)return;
+    // Unsupported native containers can still be decoded by the in-app player.
+    // Keep playback automatic instead of blocking on disabled cloud preparation.
+    if(['needs_local_preparation','needs_preparation','failed'].includes(next.state)) {
+     fallbackRef.current();return;
+    }
     setStatus(next);
     if(['queued','processing','uploading'].includes(next.state))timer=setTimeout(check,5000);
-   }catch(err){if(active)setError(err instanceof Error?err.message:'Não foi possível verificar o vídeo.');}
+   }catch{if(active)fallbackRef.current();}
   };
   void check();
   return()=>{active=false;controller.abort();clearTimeout(timer);};
@@ -66,7 +72,7 @@ export function NativePlayback(props:Props) {
      subtitleLanguage:props.initialSubtitleId==='off'?'off':subtitle?.language_code||activeProfile.preferred_subtitle_lang||'off'});
     await save(result);
     if(!disposed)closeRef.current();
-   }catch(err){if(!disposed)setError(err instanceof Error?err.message:'O player nativo não conseguiu abrir este vídeo.');}
+   }catch{if(!disposed)fallbackRef.current();}
    finally{await listener?.remove();}
   };
   void run();
