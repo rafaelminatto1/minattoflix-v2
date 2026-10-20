@@ -56,3 +56,15 @@ Referências:
 - https://docs.codemagic.io/yaml-quick-start/building-an-ionic-app/
 - https://docs.codemagic.io/yaml-quick-start/building-a-native-ios-app/
 
+## Atualização integrada de 20/10/2026
+
+- Código do aplicativo: `c2c79ab80016ad346aff0fdc7d5276554b176f6e`, integrado em `main`.
+- Produção publicada: https://minattoflix-v2.rafalegollas.workers.dev
+- Versão Cloudflare: `3d4ed1ae-c4b7-445d-8aa6-ad02ceb4927c`.
+- Login de usuário/admin e acesso ao Neon verificados em produção. Os códigos locais estão no arquivo ignorado `.env.minattoflix-access`; nunca versionar seu conteúdo.
+- 68 testes, TypeScript, build web/nativo, compilação Swift, assinatura e upload passaram. A conversão FFmpeg com mídia sintética também passou no CI.
+- Build `1.0 (3)` enviado e processado pela Apple: https://codemagic.io/app/6ad6cdb86a483b360aff08eb/build/6ad7ae98454d2506f7ab8b11
+- A atribuição automática falhou: a API Apple recusou adicionar o build ao grupo interno `MinattoFlix - Teste pessoal` (`Cannot add internal group to a build`). A instalação pelo grupo precisa de confirmação no App Store Connect; o upload e processamento já foram concluídos.
+- Removida essa atribuição incompatível do YAML para os próximos envios. Para o grupo interno, habilitar distribuição automática ou adicionar o build pela interface Apple.
+- Workers + Neon permanece restrito: processamento GitHub, R2 e IA desativados. A preparação de vídeos é local. Sincronismo, interrupções e reprodução precisam de teste físico no iPhone.
+

@@ -39,7 +39,7 @@ workflows:
       app_store_connect:
         auth: integration
         submit_to_testflight: false
-        beta_groups:
-          - MinattoFlix - Teste pessoal
+        # Apple's API rejects assigning builds to this internal group.
+        # Enable automatic distribution or add the build in App Store Connect.
         submit_to_app_store: false
 
