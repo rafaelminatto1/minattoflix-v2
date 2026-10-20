@@ -71,6 +71,7 @@ Referências:
 ## Reprodução direta e imersiva — 20/10/2026
 
 - Build `1.0 (6)`, commit `da7f86e9e4e8793ad461b9b3d4e86f70c62eaf15`: https://codemagic.io/app/6ad6cdb86a483b360aff08eb/build/6ad7ddba454d2506f7ab9b24
+- Apple confirmou `1.0 (6)` **Em testes** no grupo `MinattoFlix - Teste pessoal`, com um testador interno. Roteiro salvo no campo “O que testar”. ID Apple do build: `72a2c3e0-dff8-4b2d-921d-45a71d6245ff`.
 - Arquivos sem versão nativa compatível passam automaticamente ao player alternativo. Falhas de abertura nativa também tentam o alternativo; essa troca não converte codecs incompatíveis.
 - No app iOS, o player alternativo tenta reprodução automática, com controles inicialmente ocultos. Safari mantém as restrições de gesto existentes.
 - Durante o filme, o bridge oculta a barra de status e a restaura na saída. O player AVKit também oculta a barra de status; seus controles próprios aparecem ao tocar no vídeo e incluem pausa, busca, retorno, áudio e legendas.
