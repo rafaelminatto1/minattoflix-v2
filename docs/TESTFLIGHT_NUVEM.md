@@ -79,3 +79,16 @@ Referências:
 - Produção: versão Cloudflare `4ca02478-001d-4125-b24d-3c9021fd4d18`. Catálogo HTTP 200 sem código, com sessão pública viewer; funções administrativas seguem protegidas.
 - Validação física pendente: início direto, controles por toque, relógio oculto, retorno ao catálogo e sincronismo em filmes MP4 e MKV.
 
+## Interface móvel e controles por toque — 20/10/2026
+
+- Build `1.0 (7)`, commit `d42a7e50e65949de572318d3ba245223bcb08a02`: https://codemagic.io/app/6ad6cdb86a483b360aff08eb/build/6ad7eb92454d2506f7ab9ee3
+- Navegação móvel: Início, Buscar, Minha lista e Perfil. Categorias continuam disponíveis como filtros no cabeçalho. Busca com histórico local por perfil e limpeza; campo em 16px para evitar zoom involuntário do iPhone.
+- Perfil concentra troca de perfil e acesso administrativo. Ferramentas administrativas exigem sessão admin; removidos os botões de serviços pagos indisponíveis das telas comuns. O servidor continua protegendo as operações.
+- Cartazes abrem detalhes; botões Assistir/Continuar iniciam o vídeo. Detalhes recolhem versões, áudio e legendas; títulos indisponíveis exibem saída clara. Continuar assistindo mostra minutos restantes.
+- Imagens possuem estado de carregamento e alternativa quando falham; catálogo tem skeleton; busca vazia permite limpar filtros; erros do player oferecem tentar novamente, outra versão ou voltar ao catálogo.
+- Texto pequeno, contraste, foco visível, alvos de toque e redução de movimento revisados. Prévia conferida em 390 × 844: navegação, busca vazia, detalhes e perfil de usuário sem administração.
+- Ambos os players têm play/pause centralizado. No alternativo móvel, tocar no vídeo alterna mostrar/ocultar controles, inclusive durante pausa. Removidos a tela grande de pausa e os gestos de brilho que mantinham um filtro escuro após o toque. O player nativo oculta os controles inferior e central juntos.
+- 72 testes passaram, incluindo três verificações de renderização/estados da UI; TypeScript, builds web/nativo, compilação Swift, assinatura e upload concluídos. O build web local foi repetido com sucesso após encerrar a prévia para liberar memória.
+- Produção Cloudflare: `08f84ce6-2296-4c84-a9de-015e40066b3f`. Catálogo HTTP 200 sem código; administração sem sessão HTTP 401; modo Workers + Neon preservado.
+- Conferir no aparelho: dois toques separados mostram/escondem controles, brilho original preservado, play/pause central, legendas, rotação, retomada e tela sem relógio durante o filme.
+
