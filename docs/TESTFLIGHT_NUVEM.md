@@ -93,3 +93,15 @@ Referências:
 - Produção Cloudflare: `08f84ce6-2296-4c84-a9de-015e40066b3f`. Catálogo HTTP 200 sem código; administração sem sessão HTTP 401; modo Workers + Neon preservado.
 - Conferir no aparelho: dois toques separados mostram/escondem controles, brilho original preservado, play/pause central, legendas, rotação, retomada e tela sem relógio durante o filme.
 
+
+## Reprodução móvel e fluidez — 21/10/2026
+
+- Commit `849fb7ef8bb5f0a9ae05deadbc11a8245a575c84`; build iOS 1.0 (8): https://codemagic.io/app/6ad6cdb86a483b360aff08eb/build/6ad95ee78a524d15d6a5dc04
+- Player alternativo iOS inicia expandido. No móvel, removidos atalhos superiores de áudio/legendas e tela cheia, assim como o botão inferior de alternar tela cheia. Duplo toque não reduz o player; Voltar continua saindo do filme.
+- Toques no vídeo a até 28 pontos/pixels das bordas não alternam os controles. Ambos os players escondem os controles após dois segundos; novo toque central esconde imediatamente. Áudio/legendas permanece no menu inferior.
+- Canvas mantém o relógio de áudio atualizado a cada quadro, mas limita notificações à UI a quatro por segundo, evitando renderizações React a cada quadro. Teste garante os dois quadros exibidos e relógio atualizado apesar de uma única notificação à interface.
+- Player nativo faz a busca ao soltar a barra, evitando reiniciar o decodificador a cada movimento do dedo.
+- TypeScript, 73 testes e builds web/nativo passaram localmente. Fluidez e proteção contra toques devem ser conferidas no iPhone; os testes locais não medem quadros no aparelho.
+- Produção Cloudflare: `9fa06426-99b5-492b-8c4b-fa118fb9b49b`. Sessão pública viewer e catálogo HTTP 200; administração HTTP 401 sem sessão. Workers + Neon restrito preservado.
+- Compilação Swift, assinatura e upload Apple concluídos no CI em 2m58s. Apple processou o build `6e5b4c30-6c3f-4043-98aa-d23bb4f3ece3` e o associou ao grupo interno `MinattoFlix - Teste pessoal` (1 testador). Roteiro de teste salvo no App Store Connect.
+- Confirmado **Em testes** no grupo interno. Comprovante: `docs/testflight-build8-liberado.png`.
