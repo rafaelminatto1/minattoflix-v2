@@ -1,5 +1,6 @@
 import { isPlayerFullscreen, togglePlayerFullscreen, enterPlayerFullscreen, exitPlayerFullscreen, type FullscreenVideo } from '../services/fullscreen';
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
+import {portugueseAudio, portugueseFile, watchPlaybackVisibility} from '../services/playbackPolicy';
 import { apiUrl, requestResponse } from '../services/catalog';
 import { RoomTransport } from '../services/roomTransport';
 import { createPlayerMetrics } from '../services/playerMetrics';
@@ -225,6 +226,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const canvasPlayerRef = useRef<MkvWebCodecsCanvasPlayer | null>(null);
+  const playbackSuspendedRef = useRef(false);
   const canvasResumeTimeRef = useRef<number | null>(null);
   const audioControllerRef = useRef<HybridAudioSyncController | null>(null);
   const controlsTimerRef = useRef<number | null>(null);
@@ -236,9 +238,9 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
 
   // Prefer the mirror that supports sustained ranged playback; Drive may
   // return a download confirmation page for large public media requests.
-  const initialSelectedFile = item.files.find(file => file.id === initialFileId) || (isIosWebKit() && item.files.find((file) =>
+  const initialSelectedFile = portugueseFile(item.files, item.audioTracks, item.files.find(file => file.id === initialFileId) || (isIosWebKit() && item.files.find((file) =>
     /^(mp4|m4v)$/i.test(file.container || '') || /\.(mp4|m4v)$/i.test(file.filename || '')))
-    || item.files.find((file) => file.provider === 'onedrive') || item.files[0];
+    || item.files.find((file) => file.provider === 'onedrive') || item.files[0]);
   const [selectedFile, setSelectedFile] = useState<MediaFile | undefined>(initialSelectedFile);
   const [customStreamUrl, setCustomStreamUrl] = useState<string | null>(null);
   const effectiveStreamUrl = customStreamUrl || selectedFile?.streamUrl || '';
@@ -396,16 +398,25 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
     };
   }, [playing, streamError]);
 
-  // Resume audio context on visibility change (iOS Safari may suspend audio context when tab is hidden)
   useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        audioControllerRef.current?.resumeAudioContext();
-      }
+    const pause = () => {
+      playbackSuspendedRef.current = true;
+      canvasPlayerRef.current?.pause();
+      videoRef.current?.pause();
+      audioControllerRef.current?.notifyClockPause();
+      setPlaying(false);
     };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, []);
+    const unwatch = watchPlaybackVisibility(document, window, pause);
+    let disposed = false;
+    let listener: PluginListenerHandle | undefined;
+    if (nativeIos) {
+      const shell = registerPlugin<{addListener(event: 'playbackInactive', callback: () => void): Promise<PluginListenerHandle>}>('NativePlayer');
+      void shell.addListener('playbackInactive', pause).then(handle => {
+        if (disposed) void handle.remove(); else listener = handle;
+      }).catch(() => {});
+    }
+    return () => { disposed = true; unwatch(); void listener?.remove(); };
+  }, [nativeIos]);
 
   // Playback telemetry uses bounded events; there is no periodic metrics upload.
 
@@ -417,68 +428,14 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
     : item.audioTracks;
   const candidateAudioTracks = initialFileAudioTracks.length > 0 ? initialFileAudioTracks : item.audioTracks;
 
-  const initialFileSubTracks = initialSelectedFile
-    ? item.subtitleTracks.filter((s) => s.media_file_id === initialSelectedFile.id || s.source_type !== 'embedded')
-    : item.subtitleTracks;
-  const candidateSubTracks = initialFileSubTracks.length > 0 ? initialFileSubTracks : item.subtitleTracks;
-
-  // Resolve initial playing audio track
-  const initialResolvedAudio =
-    (initialAudioId && candidateAudioTracks.find((a) => a.id === initialAudioId)) ||
-    (item.progress?.selected_audio_id && candidateAudioTracks.find((a) => a.id === item.progress?.selected_audio_id)) ||
-    candidateAudioTracks.find((a) => a.language_code === activeProfile.preferred_audio_lang) ||
-    candidateAudioTracks.find((a) => ['pt-br', 'pt', 'por', 'pob'].includes((a.language_code || '').toLowerCase())) ||
-    candidateAudioTracks[0];
-
-  const isAudioPortuguese = Boolean(
-    initialResolvedAudio &&
-    ['pt-br', 'pt', 'por', 'pob'].includes((initialResolvedAudio.language_code || '').toLowerCase())
-  );
-
-  const isMoviePortuguese = Boolean(
-    ['pt-br', 'pt', 'por', 'pob'].includes(((item as unknown as { original_language?: string }).original_language || '').toLowerCase()) || isAudioPortuguese
-  );
-
-  // Audio & Subtitle Menu State
+  // Every title starts dubbed when a Portuguese track exists, regardless of
+  // old progress/profile language choices. Subtitles always start disabled.
+  const initialResolvedAudio = portugueseAudio(candidateAudioTracks)
+    || (initialAudioId && candidateAudioTracks.find(track => track.id === initialAudioId))
+    || candidateAudioTracks[0];
   const [showAudioSubMenu, setShowAudioSubMenu] = useState(false);
   const [activeAudioId, setActiveAudioId] = useState<string>(initialResolvedAudio?.id || '');
-
-  const [activeSubtitleId, setActiveSubtitleId] = useState<string>(() => {
-    // 1. Explicit initial selection from caller
-    if (initialSubtitleId) {
-      if (initialSubtitleId === 'off') return 'off';
-      const match = candidateSubTracks.find((s) => s.id === initialSubtitleId);
-      if (match) return match.id;
-    }
-
-    // 2. Saved user progress for this specific title
-    const savedSubId = item.progress?.selected_subtitle_id;
-    if (savedSubId) {
-      if (savedSubId === 'off') return 'off';
-      const match = candidateSubTracks.find((s) => s.id === savedSubId);
-      if (match) return match.id;
-    }
-
-    // 3. User requirement: "mas em filme postugues deixes por padrão desativada quando reproduzido"
-    // In Portuguese movies or when playing in Portuguese, subtitles are OFF by default!
-    if (isMoviePortuguese || isAudioPortuguese) {
-      const forcedSub = candidateSubTracks.find((s) => s.is_forced);
-      return forcedSub ? forcedSub.id : 'off';
-    }
-
-    // 4. Foreign movie (e.g. Odyssey with English audio):
-    // Brazilian users need PT-BR subtitles enabled by default!
-    const ptSub = candidateSubTracks.find((s) =>
-      ['pt-br', 'pt', 'por', 'pob'].includes((s.language_code || '').toLowerCase())
-    );
-    if (ptSub) return ptSub.id;
-
-    // 5. Default track if configured, else off
-    const defaultSub = candidateSubTracks.find((s) => s.is_default);
-    if (defaultSub) return defaultSub.id;
-
-    return 'off';
-  });
+  const [activeSubtitleId, setActiveSubtitleId] = useState<string>('off');
 
   const [audioStatusNote, setAudioStatusNote] = useState<string>('Preparando áudio…');
   const [mediabunnyTracks, setMediabunnyTracks] = useState<MediabunnyTrackSummary[]>([]);
@@ -640,7 +597,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
   const previousAudioTrack = item.audioTracks.find((a) => a.id === activeAudioId);
   const resolvedAudioTrack = visibleAudioTracks.find((a) => a.id === activeAudioId)
     || visibleAudioTracks.find((a) => a.language_code === previousAudioTrack?.language_code)
-    || visibleAudioTracks.find((a) => a.is_default) || visibleAudioTracks[0];
+    || portugueseAudio(visibleAudioTracks) || visibleAudioTracks.find((a) => a.is_default) || visibleAudioTracks[0];
 
   useEffect(() => {
     if (!videoRef.current) return;
@@ -730,6 +687,9 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
         setBufferedEnd(bufEnd);
       },
       onCanPlay: () => {
+        if (playbackSuspendedRef.current || document.visibilityState !== 'visible') {
+          player.pause(); audioControllerRef.current?.notifyClockPause(); setPlaying(false); return;
+        }
         metricsRef.current?.('start');
         if (!active) return;
         clearLoadTimer();
@@ -1496,6 +1456,8 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
   }, [item.id, activeAudioId, activeSubtitleId, duration, useWebCodecsCanvas]);
 
   const togglePlay = () => {
+    if (document.visibilityState !== 'visible') return;
+    playbackSuspendedRef.current = false;
     audioControllerRef.current?.resumeAudioContext();
     if (useWebCodecsCanvas && canvasPlayerRef.current) {
       if (canvasPlayerRef.current.isPaused()) {
@@ -1710,18 +1672,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
   const handleSelectAudioTrack = async (track: AudioTrack) => {
     setActiveAudioId(track.id);
 
-    // "mas em filme postugues deixes por padrão desativada quando reproduzido"
-    const isPt = ['pt-br', 'pt', 'por', 'pob'].includes((track.language_code || '').toLowerCase());
-    if (isPt) {
-      setActiveSubtitleId('off');
-    } else {
-      const ptSub = candidateSubTracks.find((s) =>
-        ['pt-br', 'pt', 'por', 'pob'].includes((s.language_code || '').toLowerCase())
-      );
-      if (ptSub && activeSubtitleId === 'off') {
-        setActiveSubtitleId(ptSub.id);
-      }
-    }
+    setActiveSubtitleId('off');
 
     if (!audioControllerRef.current) return;
     if (track.source_type === 'embedded' && track.id !== activeAudioId) return;
@@ -1942,7 +1893,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
         onTouchStart={() => {
           audioControllerRef.current?.resumeAudioContext();
         }}
-        className={`player-shell fixed inset-0 w-full h-full bg-black flex flex-col justify-between select-none overflow-hidden ${hideCursor ? 'hide-cursor cursor-none' : ''} ${expandedPlayer ? 'player-landscape z-[100]' : 'z-50'}`}
+        className={`player-shell fixed inset-0 w-full h-full bg-black flex flex-col justify-between select-none overflow-hidden ${hideCursor ? 'hide-cursor cursor-none' : ''} ${expandedPlayer ? `${nativeIos ? '' : 'player-landscape '}z-[100]` : 'z-50'}`}
       >
       {fullscreenError && <div role="status" className="absolute top-20 left-4 right-4 z-[60] rounded bg-black/90 p-3 text-center text-sm text-white">{fullscreenError}</div>}
       {streamError && <div role="alert" className="absolute inset-0 z-[80] bg-black/95 flex items-center justify-center p-6"><div className="max-w-md text-center space-y-4"><h2 className="text-xl font-bold">Não foi possível reproduzir este filme</h2><p className="text-zinc-300">Confira sua conexão e tente novamente. Se o problema continuar, escolha outra versão do filme.</p><button className="bg-white text-black rounded-lg px-5 py-3 font-semibold" onClick={handleRetryStream}>Tentar novamente</button>{item.files.filter(file=>file.id!==selectedFile?.id).map((file,index)=><button key={file.id} className="block w-full rounded-lg bg-zinc-800 p-3" onClick={()=>{setSelectedFile(file);setStreamError(null);setIsBuffering(true);}}>Tentar versão {index+1}</button>)}<button className="block w-full p-3" onClick={handleExitPlayer}>Voltar ao catálogo</button><details className="text-sm text-zinc-400"><summary>Detalhes do problema</summary><p className="mt-2 break-words">{streamError}</p></details></div></div>}
@@ -1990,6 +1941,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
             onClick={handleVideoClick}
             onDoubleClick={handleVideoDoubleClick}
             onPlay={() => {
+              if (playbackSuspendedRef.current || document.visibilityState !== 'visible') { videoRef.current?.pause(); return; }
               if (!useWebCodecsCanvas) setPlaying(true);
               if (!isFullscreen) {
                 void enterFullscreen();
@@ -2011,7 +1963,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
                 v.currentTime = item.progress.position_seconds;
               }
               setIsBuffering(false);
-              if (v.paused && (nativeIos || !isIosWebKit())) {
+              if (v.paused && !playbackSuspendedRef.current && document.visibilityState === 'visible' && (nativeIos || !isIosWebKit())) {
                 v.play().catch(() => { setPlaying(false); setShowControls(true); });
               }
               // Auto-fullscreen em computadores e celulares quando o vídeo inicia

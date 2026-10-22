@@ -3,8 +3,18 @@ import Capacitor
 
 class MinattoBridgeViewController: CAPBridgeViewController {
     var immersive = false {
-        didSet { setNeedsStatusBarAppearanceUpdate(); setNeedsUpdateOfHomeIndicatorAutoHidden() }
+        didSet {
+            guard oldValue != immersive else { return }
+            setNeedsStatusBarAppearanceUpdate(); setNeedsUpdateOfHomeIndicatorAutoHidden()
+            if #available(iOS 16.0, *) {
+                setNeedsUpdateOfSupportedInterfaceOrientations()
+                view.window?.windowScene?.requestGeometryUpdate(.iOS(interfaceOrientations: immersive ? .landscapeRight : .portrait))
+            } else {
+                UIViewController.attemptRotationToDeviceOrientation()
+            }
+        }
     }
+    override var supportedInterfaceOrientations: UIInterfaceOrientationMask { immersive ? .landscapeRight : .portrait }
     override var prefersStatusBarHidden: Bool { immersive }
     override func capacitorDidLoad() {
         bridge?.registerPluginInstance(NativePlayerPlugin())
@@ -13,6 +23,9 @@ class MinattoBridgeViewController: CAPBridgeViewController {
 
 private class MovieViewController: AVPlayerViewController {
     var onClose: (() -> Void)?
+    override var supportedInterfaceOrientations: UIInterfaceOrientationMask { .landscapeRight }
+    override var preferredInterfaceOrientationForPresentation: UIInterfaceOrientation { .landscapeRight }
+
     override var prefersStatusBarHidden: Bool { true }
     override var prefersHomeIndicatorAutoHidden: Bool { true }
     private let controls = UIStackView()
@@ -133,6 +146,18 @@ private class MovieViewController: AVPlayerViewController {
 
 @objc(NativePlayerPlugin)
 public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin {
+    private var lifecycleObservers: [NSObjectProtocol] = []
+    public override func load() {
+        for name in [UIApplication.willResignActiveNotification, UIApplication.didEnterBackgroundNotification, Notification.Name("MinattoPlaybackInactive")] {
+            lifecycleObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                self?.playbackInterrupted = true
+                self?.player?.pause()
+                self?.emitProgress()
+                self?.notifyListeners("playbackInactive", data: [:])
+            })
+        }
+    }
+    deinit { lifecycleObservers.forEach { NotificationCenter.default.removeObserver($0) } }
     public let identifier = "NativePlayerPlugin"
     public let jsName = "NativePlayer"
     public let pluginMethods: [CAPPluginMethod] = [CAPPluginMethod(name: "play", returnType: CAPPluginReturnPromise), CAPPluginMethod(name: "setImmersive", returnType: CAPPluginReturnPromise)]
@@ -150,6 +175,7 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin {
     private var backgroundObserver: NSObjectProtocol?
     private var errorObserver: NSObjectProtocol?
     private var startupTimer: Timer?
+    private var playbackInterrupted = false
     private var prepared = false
 
     @objc func play(_ call: CAPPluginCall) {
@@ -165,6 +191,7 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin {
             } catch { call.reject("Não foi possível iniciar o áudio."); return }
             self.activeCall = call
             self.prepared = false
+            self.playbackInterrupted = false
             let item = AVPlayerItem(url: url)
             item.preferredForwardBufferDuration = 5
             let player = AVPlayer(playerItem: item)
@@ -198,15 +225,17 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin {
                     if item.status == .failed { self.fail("Não foi possível abrir este vídeo no player nativo."); return }
                     guard item.status == .readyToPlay, !self.prepared else { return }
                     self.prepared = true
-                    let audioLanguage = call.getString("audioLanguage") ?? "pt-BR"
-                    if let group = item.asset.mediaSelectionGroup(forMediaCharacteristic: .audible),
-                       let option = AVMediaSelectionGroup.mediaSelectionOptions(from: group.options, with: Locale(identifier: audioLanguage)).first {
-                        item.select(option, in: group)
+                    player.appliesMediaSelectionCriteriaAutomatically = false
+                    if let group = item.asset.mediaSelectionGroup(forMediaCharacteristic: .audible) {
+                        let option = AVMediaSelectionGroup.mediaSelectionOptions(from: group.options, with: Locale(identifier: "pt-BR")).first
+                            ?? group.options.first { option in
+                                let code = (option.extendedLanguageTag ?? option.locale?.identifier ?? "").lowercased().replacingOccurrences(of: "_", with: "-")
+                                return code == "pt" || code.hasPrefix("pt-") || code == "por" || code == "pob"
+                            }
+                        if let option = option { item.select(option, in: group) }
                     }
                     if let group = item.asset.mediaSelectionGroup(forMediaCharacteristic: .legible) {
-                        let language = call.getString("subtitleLanguage") ?? "off"
-                        let option = language == "off" ? nil : AVMediaSelectionGroup.mediaSelectionOptions(from: group.options, with: Locale(identifier: language)).first
-                        item.select(option, in: group)
+                        item.select(nil, in: group)
                     }
                     let duration = item.duration.seconds
                     let position = duration.isFinite ? min(start, max(0, duration - 1)) : start
@@ -217,7 +246,8 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin {
                                 guard let self = self, self.activeCall != nil else { return }
                                 guard ready else { self.fail("Não foi possível preparar áudio e vídeo."); return }
                                 self.startupTimer?.invalidate()
-                                player.play()
+                                // Preparing can finish after the user locks the phone.
+                                if !self.playbackInterrupted && self.controller?.view.window?.windowScene?.activationState == .foregroundActive { player.play() }
                             }
                         }
                     }

@@ -2,6 +2,7 @@ import React,{useEffect,useRef,useState} from 'react';
 import {registerPlugin,type PluginListenerHandle} from '@capacitor/core';
 import type {MediaItem,Profile} from '../types';
 import {apiUrl,requestJson} from '../services/catalog';
+import {portugueseAudio, portugueseFile} from '../services/playbackPolicy';
 import {useDialog} from '../hooks/useDialog';
 
 interface Progress {position:number;duration:number}
@@ -20,7 +21,7 @@ const player=registerPlugin<NativePlayer>('NativePlayer');
 export function NativePlayback(props:Props) {
  const {item,activeProfile,onClose,onFallback}=props;
  const dialog=useDialog(onClose);
- const file=item.files.find(f=>f.id===props.initialFileId)||item.files.find(f=>/^(mp4|m4v)$/i.test(f.container||''))||item.files.find(f=>f.provider==='onedrive')||item.files[0];
+ const file=portugueseFile(item.files,item.audioTracks,item.files.find(f=>f.id===props.initialFileId)||item.files.find(f=>/^(mp4|m4v)$/i.test(f.container||''))||item.files.find(f=>f.provider==='onedrive')||item.files[0]);
  const [status,setStatus]=useState<Status|null>(null);
  const [error,setError]=useState('');
  const [busy,setBusy]=useState(false);
@@ -56,20 +57,18 @@ export function NativePlayback(props:Props) {
   started.current=true;setError('');
   let listener:PluginListenerHandle|undefined;
   let disposed=false;
-  const audio=item.audioTracks.find(track=>track.id===props.initialAudioId);
-  const subtitle=item.subtitleTracks.find(track=>track.id===props.initialSubtitleId);
+  const audio=portugueseAudio(item.audioTracks.filter(track=>track.media_file_id===file?.id || track.source_type!=='embedded'));
   const save=async(progress:Progress)=>{
    if(progress.position<=1||!Number.isFinite(progress.duration)||progress.duration<=0)return;
    await saveRef.current({mediaItemId:item.id,positionSeconds:progress.position,durationSeconds:progress.duration,
-    selectedAudioId:audio?.id,selectedSubtitleId:props.initialSubtitleId});
+    selectedAudioId:audio?.id,selectedSubtitleId:'off'});
   };
   const run=async()=>{
    try {
     listener=await player.addListener('progress',progress=>{void save(progress).catch(()=>{});});
     if(disposed){await listener.remove();return;}
     const result=await player.play({url:apiUrl(status.url!),position:item.progress?.is_completed?0:item.progress?.position_seconds||0,
-     audioLanguage:audio?.language_code||activeProfile.preferred_audio_lang||'pt-BR',
-     subtitleLanguage:props.initialSubtitleId==='off'?'off':subtitle?.language_code||activeProfile.preferred_subtitle_lang||'off'});
+     audioLanguage:'pt-BR', subtitleLanguage:'off'});
     await save(result);
     if(!disposed)closeRef.current();
    }catch{if(!disposed)fallbackRef.current();}

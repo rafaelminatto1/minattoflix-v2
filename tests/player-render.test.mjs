@@ -8,6 +8,8 @@ import { renderToString } from 'react-dom/server';
 import ts from 'typescript';
 
 const require = createRequire(import.meta.url);
+const policyExports = {};
+runInNewContext(ts.transpileModule(await readFile(new URL('../src/client/services/playbackPolicy.ts', import.meta.url), 'utf8'), {compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText, {exports:policyExports});
 const source = await readFile(new URL('../src/client/components/NetflixPlayer.tsx', import.meta.url), 'utf8');
 const code = ts.transpileModule(source, {
   compilerOptions: {
@@ -24,7 +26,9 @@ for (const ios of [false, true]) {
     runInNewContext(code, {
       exports,
       require(id) {
-        if (id === '../hooks/useDialog') return { useDialog: () => React.useRef(null) };
+        if (id === '../services/playbackPolicy') return policyExports;
+        if (id === '../services/playbackPolicy') return policyExports;
+      if (id === '../hooks/useDialog') return { useDialog: () => React.useRef(null) };
         if (id === '../services/mkvAudioController') return { isIosWebKit: () => ios, isTvOrAndroidNative: () => false };
         if (id.startsWith('../services/')) return { apiUrl: (path) => path };
         return require(id);
@@ -61,15 +65,17 @@ test('NetflixPlayer implements streaming best practices (Media Session, HLS buff
   assert.match(content, /fastSeek/);
   assert.match(content, /handleVideoDoubleClick/);
   assert.match(content, /showOsdFeedback/);
-  assert.match(content, /isMoviePortuguese/);
-  assert.match(content, /isAudioPortuguese/);
+
 });
 
-test('NetflixPlayer defaults subtitles to off for Portuguese movies and pt-BR for foreign movies', () => {
+test('NetflixPlayer starts every title without subtitles despite saved or forced defaults', () => {
   const exports = {};
+  const initialStates=[];
   runInNewContext(code, {
     exports,
     require(id) {
+      if(id==='react') return {...React,useState(initial){const value=typeof initial==='function'?initial():initial;initialStates.push(value);return React.useState(initial);}};
+      if (id === '../services/playbackPolicy') return policyExports;
       if (id === '../hooks/useDialog') return { useDialog: () => React.useRef(null) };
       if (id === '../services/mkvAudioController') return { isIosWebKit: () => false, isTvOrAndroidNative: () => false };
       if (id.startsWith('../services/')) return { apiUrl: (path) => path };
@@ -86,14 +92,17 @@ test('NetflixPlayer defaults subtitles to off for Portuguese movies and pt-BR fo
       files: [{ id: 'file-pt', container: 'mp4', filename: 'filme.mp4', streamUrl: '/filme.mp4' }],
       audioTracks: [{ id: 'audio-pt', media_file_id: 'file-pt', language_code: 'pt-BR', label: 'Português', is_default: true }],
       subtitleTracks: [{ id: 'sub-pt', media_file_id: 'file-pt', language_code: 'pt-BR', label: 'Português (Brasil)', is_default: false }],
-      progress: null,
+      progress: {selected_subtitle_id:'sub-pt'},
     },
     activeProfile: { preferred_audio_lang: 'pt-BR', preferred_subtitle_lang: 'off' },
     onClose() {}, onSaveProgress: async () => {}, onRefreshCatalog: async () => {},
   }));
   assert.ok(ptHtml.includes('Filme Nacional'));
+  assert.ok(initialStates.includes('off'));
+  assert.ok(!initialStates.includes('sub-pt'));
+  initialStates.length=0;
 
-  // 2. Foreign movie (e.g. Odyssey with English audio) - PT-BR subtitle must be enabled by default
+  // Foreign and forced subtitles must also start disabled.
   const enHtml = renderToString(React.createElement(exports.NetflixPlayer, {
     item: {
       id: 'movie-en', title: 'The Odyssey', type: 'movie', runtime_minutes: 120,
@@ -103,10 +112,12 @@ test('NetflixPlayer defaults subtitles to off for Portuguese movies and pt-BR fo
         { id: 'sub-pt', media_file_id: 'file-en', language_code: 'pt-BR', label: 'Português (Brasil) [OpenSubtitles]', is_default: true },
         { id: 'sub-en', media_file_id: 'file-en', language_code: 'en-US', label: 'Inglês [OpenSubtitles]', is_default: false },
       ],
-      progress: null,
+      progress: {selected_subtitle_id:'sub-pt'},
     },
     activeProfile: { preferred_audio_lang: 'pt-BR', preferred_subtitle_lang: 'off' },
     onClose() {}, onSaveProgress: async () => {}, onRefreshCatalog: async () => {},
   }));
   assert.ok(enHtml.includes('The Odyssey'));
+  assert.ok(initialStates.includes('off'));
+  assert.ok(!initialStates.includes('sub-pt'));
 });
