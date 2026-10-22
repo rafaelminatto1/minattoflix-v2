@@ -105,3 +105,18 @@ Referências:
 - Produção Cloudflare: `9fa06426-99b5-492b-8c4b-fa118fb9b49b`. Sessão pública viewer e catálogo HTTP 200; administração HTTP 401 sem sessão. Workers + Neon restrito preservado.
 - Compilação Swift, assinatura e upload Apple concluídos no CI em 2m58s. Apple processou o build `6e5b4c30-6c3f-4043-98aa-d23bb4f3ece3` e o associou ao grupo interno `MinattoFlix - Teste pessoal` (1 testador). Roteiro de teste salvo no App Store Connect.
 - Confirmado **Em testes** no grupo interno. Comprovante: `docs/testflight-build8-liberado.png`.
+
+## Idioma, orientação fixa e bloqueio da tela — 21/10/2026
+
+- Commit `6a24b7ff0285796da00ccfbe89ddae223323d84a`; build 1.0 (9): https://codemagic.io/app/6ad6cdb86a483b360aff08eb/build/6ad965dd8a524d15d6a5dd60
+- Todo título começa sem legendas, ignorando seleção salva e legendas padrão/forçadas. Português (Brasil) e variantes pt/por/pob têm prioridade de áudio; versões com faixa portuguesa conhecida têm prioridade sobre originais sem dublagem. Isso não cria uma faixa ausente no arquivo nem remove legendas gravadas na imagem.
+- AVPlayer seleciona português e desativa seleção automática de idioma/legendas do sistema. O menu continua permitindo escolhas manuais durante a sessão.
+- iOS fixa a reprodução em landscapeRight e restaura portrait no catálogo. O player alternativo usa a orientação nativa, sem somar rotação CSS ao acelerômetro. Implementado com máscara de orientações e requestGeometryUpdate no iOS 16+, com guarda para o deployment target 15.
+- SceneDelegate avisa quando a cena perde atividade; plugin pausa AVPlayer e avisa o player web. Visibility/pagehide pausam vídeo, canvas e áudio externo/WASM. Retornar ao app não retoma automaticamente; preparação assíncrona concluída após bloqueio também não inicia reprodução.
+- TypeScript, 76 testes e builds web/nativo passaram localmente. Testes cobrem seleção portuguesa, escolha de versão dublada, legendas desligadas apesar de progresso salvo e pausa sem retomada na visibilidade.
+- Produção Cloudflare: `8d59e1ad-bc63-4254-a4fd-b4387b55b99e`. Sessão e catálogo HTTP 200; administração sem sessão HTTP 401. Workers + Neon restrito preservado.
+- Validar no iPhone: balançar/girar aparelho durante filme sem reduzir o player; bloquear durante reprodução e também durante carregamento; desbloquear e confirmar pausa até tocar Play; ouvir português e conferir ausência de legendas.
+- Referência UIKit: https://developer.apple.com/documentation/uikit/uiwindowscene/requestgeometryupdate(_:errorhandler:), https://developer.apple.com/documentation/uikit/uiviewcontroller/supportedinterfaceorientations
+- CI concluiu compilação Swift, assinatura e upload em 3m09s; build 9 recebido pela Apple.
+- Build Apple `c5eb4034-465b-4cf9-a80a-ead14870f865` processado e associado ao grupo interno `MinattoFlix - Teste pessoal` (1 testador). Roteiro específico registrado no App Store Connect.
+- Confirmado **Em testes** no grupo interno; comprovante `docs/testflight-build9-liberado.png`. Atualizar MinattoFlix para 1.0 (9) no TestFlight e executar validação física.
