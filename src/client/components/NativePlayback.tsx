@@ -87,7 +87,7 @@ export function NativePlayback(props:Props) {
  };
  const working=status&&['queued','processing','uploading'].includes(status.state);
  if(!error && (!status || status.state==='ready')) return <div ref={dialog} role="dialog" aria-modal="true" aria-label={`Reprodução de ${item.title}`} tabIndex={-1}
-  className="fixed inset-0 z-[100] bg-black flex items-center justify-center text-zinc-400"><p role="status">Carregando filme…</p></div>;
+  className="fixed inset-0 z-[100] bg-black flex items-center justify-center text-zinc-400"><div role="status" aria-label="Carregando vídeo" className="w-12 h-12 border-4 border-[#E50914] border-t-transparent rounded-full animate-spin" /></div>;
  return <div ref={dialog} role="dialog" aria-modal="true" aria-label={`Reprodução de ${item.title}`} tabIndex={-1}
   className="fixed inset-0 z-[100] bg-[#101010] text-white flex items-center justify-center p-6 safe-top safe-bottom safe-left safe-right">
   <div className="w-full max-w-md space-y-5">

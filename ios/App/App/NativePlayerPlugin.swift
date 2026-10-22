@@ -124,7 +124,15 @@ private class MovieViewController: AVPlayerViewController {
         } }
     }
     @objc private func closeMovie() { dismiss(animated: true) }
-    @objc private func togglePlayback() { if player?.rate == 0 { player?.play() } else { player?.pause() } }
+    @objc private func togglePlayback() {
+        if player?.rate == 0 {
+            do {
+                try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+                try AVAudioSession.sharedInstance().setActive(true)
+                player?.play()
+            } catch { timeLabel.text = "Não foi possível retomar o áudio. Toque Play para tentar novamente." }
+        } else { player?.pause() }
+    }
     @objc private func skipBack() { skip(-10) }
     @objc private func skipForward() { skip(10) }
     private func skip(_ seconds: Double) {
@@ -160,7 +168,17 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin {
     deinit { lifecycleObservers.forEach { NotificationCenter.default.removeObserver($0) } }
     public let identifier = "NativePlayerPlugin"
     public let jsName = "NativePlayer"
-    public let pluginMethods: [CAPPluginMethod] = [CAPPluginMethod(name: "play", returnType: CAPPluginReturnPromise), CAPPluginMethod(name: "setImmersive", returnType: CAPPluginReturnPromise)]
+    public let pluginMethods: [CAPPluginMethod] = [CAPPluginMethod(name: "play", returnType: CAPPluginReturnPromise), CAPPluginMethod(name: "setImmersive", returnType: CAPPluginReturnPromise), CAPPluginMethod(name: "activateAudio", returnType: CAPPluginReturnPromise)]
+    @objc func activateAudio(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            guard UIApplication.shared.applicationState == .active else { call.reject("App inativo"); return }
+            do {
+                try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+                try AVAudioSession.sharedInstance().setActive(true)
+                call.resolve()
+            } catch { call.reject("Não foi possível ativar o áudio.") }
+        }
+    }
     @objc func setImmersive(_ call: CAPPluginCall) {
         DispatchQueue.main.async { [weak self] in
             (self?.bridge?.viewController as? MinattoBridgeViewController)?.immersive = call.getBool("enabled") ?? false

@@ -263,6 +263,19 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
   });
 
   const nativeIos = Capacitor.getPlatform() === 'ios';
+  const resumePlaybackAudio = useCallback(() => {
+    audioControllerRef.current?.resumeAudioContext();
+    if (!nativeIos || document.visibilityState !== 'visible') return;
+    const shell = registerPlugin<{activateAudio(): Promise<void>}>('NativePlayer');
+    void shell.activateAudio().then(() => {
+      if (playbackSuspendedRef.current || document.visibilityState !== 'visible') return;
+      const ctrl = audioControllerRef.current;
+      ctrl?.resumeAudioContext();
+      const time = canvasPlayerRef.current?.getCurrentTime() ?? videoRef.current?.currentTime ?? 0;
+      ctrl?.notifyClockSeek(time);
+      ctrl?.notifyClockPlay();
+    }).catch(() => {});
+  }, [nativeIos]);
   const [playing, setPlaying] = useState(() => nativeIos || !isIosWebKit());
   const [currentTime, setCurrentTime] = useState(item.progress?.is_completed ? 0 : item.progress?.position_seconds || 0);
   const [duration, setDuration] = useState(item.progress?.duration_seconds || item.runtime_minutes * 60);
@@ -606,6 +619,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
     audioControllerRef.current = ctrl;
     // Initialize audio graph early to set audioSession.type = 'playback' for iOS silent mode support
     ctrl.resumeAudioContext();
+    resumePlaybackAudio();
     const video = videoRef.current;
     const diagnosticsTimer = window.setInterval(() => {
       for (const [key, value] of Object.entries(ctrl.getAudioDiagnostics())) {
@@ -1458,7 +1472,8 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
   const togglePlay = () => {
     if (document.visibilityState !== 'visible') return;
     playbackSuspendedRef.current = false;
-    audioControllerRef.current?.resumeAudioContext();
+    const paused = useWebCodecsCanvas ? canvasPlayerRef.current?.isPaused() : videoRef.current?.paused;
+    if (paused) resumePlaybackAudio();
     if (useWebCodecsCanvas && canvasPlayerRef.current) {
       if (canvasPlayerRef.current.isPaused()) {
         canvasPlayerRef.current.play();
@@ -1537,7 +1552,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
   const restartPlayback = () => {
     const player = useWebCodecsCanvas ? canvasPlayerRef.current : videoRef.current;
     if (!player) return;
-    audioControllerRef.current?.resumeAudioContext();
+    resumePlaybackAudio();
     resetControlsTimer();
     if (!isFullscreen) {
       void enterFullscreen();
@@ -2256,11 +2271,9 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
 
       {/* Netflix Red Loading Spinner */}
       {isBuffering && effectiveStreamUrl && !streamError && (
-        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center z-20 px-4 text-center safe-top safe-bottom">
+        <div role="status" aria-label="Carregando vídeo" className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center z-20 px-4 text-center safe-top safe-bottom">
           <div className="w-12 h-12 sm:w-16 sm:h-16 border-4 border-[#E50914] border-t-transparent rounded-full animate-spin" />
-          <span className="mt-3 text-[11px] sm:text-xs font-semibold tracking-wider text-zinc-300 uppercase">
-            Carregando transmissão em alta definição...
-          </span>
+
         </div>
       )}
 

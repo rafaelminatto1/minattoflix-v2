@@ -182,6 +182,10 @@ export class HybridAudioSyncController {
   public resumeAudioContext() {
     // Create the graph during the tap, before asynchronous track inspection.
     // iOS cannot unlock a context first created after user activation expires.
+    if (this.audioCtx?.state === 'closed') {
+      this.stopActiveBufferNodes();
+      this.audioCtx = null;
+    }
     const ctx = this.ensureAudioGraph();
     // Start a source inside the gesture as well as resuming the context.
     // WebKit can keep the audio output locked until a source starts on a tap.
@@ -191,6 +195,12 @@ export class HybridAudioSyncController {
       unlock.connect(ctx.destination);
       unlock.onended = () => unlock.disconnect();
       unlock.start();
+      // iOS can leave a context interrupted after screen lock. Once resumed,
+      // discard old scheduling anchors and restart against the current clock.
+      void ctx.resume().then(() => {
+        if (ctx !== this.audioCtx || this.isMediaPaused()) return;
+        this.notifyClockSeek(this.getMediaTime());
+      }).catch(() => {});
     }
   }
 

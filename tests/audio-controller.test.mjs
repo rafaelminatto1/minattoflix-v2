@@ -215,3 +215,29 @@ test('native track selection enables exactly one language after WASM playback', 
   assert.deepEqual(video.audioTracks.map(t=>t.enabled),[false,true]);
   ctrl.destroy();
 });
+
+test('interrupted iPhone audio resumes and reanchors only while playback is active', async () => {
+ const {ctrl,video}=setup();
+ ctrl.resumeAudioContext();
+ const ctx=ctrl.audioCtx;
+ ctx.state='interrupted';
+ const pending=[];
+ ctx.resume=()=>new Promise(resolve=>pending.push(()=>{ctx.state='running';resolve();}));
+ ctx.createBuffer=()=>({});
+ ctx.createBufferSource=()=>({connect(){},disconnect(){},start(){}});
+ const anchors=[];ctrl.notifyClockSeek=time=>anchors.push(time);
+ video.currentTime=17;video.paused=false;
+ ctrl.resumeAudioContext();
+ pending.splice(0).forEach(resolve=>resolve());await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual(anchors,[17]);
+ ctx.state='interrupted';video.paused=true;
+ ctrl.resumeAudioContext();
+ pending.splice(0).forEach(resolve=>resolve());await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual(anchors,[17]);ctrl.destroy();
+});
+
+test('a closed audio context is recreated on a new playback gesture', () => {
+ const {ctrl}=setup();ctrl.resumeAudioContext();const old=ctrl.audioCtx;
+ old.state='closed';ctrl.resumeAudioContext();
+ assert.notEqual(ctrl.audioCtx,old);assert.equal(ctrl.audioCtx.state,'running');ctrl.destroy();
+});
