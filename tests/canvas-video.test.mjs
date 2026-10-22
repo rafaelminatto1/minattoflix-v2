@@ -108,3 +108,14 @@ test('audio clock remains gated until the first decoded frame is drawn, includin
   assert.equal(player.isWaitingForFrame(),false);
  } finally { release(); fixture.firstFrame=null; player.destroy(); }
 });
+
+test('rendering keeps every frame and its audio clock while throttling interface updates', async t => {
+ fixture.fail=false; fixture.clock=0;
+ t.mock.method(performance,'now',()=>fixture.clock+=40);
+ const {player,events}=setup();
+ await player.open('/movie'); await settle();
+ assert.equal(events.filter(event=>event==='draw').length,2);
+ assert.equal(events.filter(event=>event==='time').length,1);
+ assert.equal(player.getCurrentTime(),0.04);
+ player.destroy();
+});

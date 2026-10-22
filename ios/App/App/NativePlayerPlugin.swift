@@ -27,6 +27,7 @@ private class MovieViewController: AVPlayerViewController {
         view.backgroundColor = .black
         let tap = UITapGestureRecognizer(target: self, action: #selector(toggleControls))
         tap.cancelsTouchesInView = false
+        isModalInPresentation = true
         view.addGestureRecognizer(tap)
         controls.axis = .vertical; controls.spacing = 16
         controls.backgroundColor = UIColor.black.withAlphaComponent(0.7)
@@ -54,7 +55,7 @@ private class MovieViewController: AVPlayerViewController {
         NSLayoutConstraint.activate([centerControls.centerXAnchor.constraint(equalTo: view.centerXAnchor), centerControls.centerYAnchor.constraint(equalTo: view.centerYAnchor)])
         seekBar.accessibilityLabel = "Posição do filme"
         timeLabel.textColor = .white; timeLabel.font = .preferredFont(forTextStyle: .caption1)
-        seekBar.addTarget(self, action: #selector(seekChanged), for: .valueChanged)
+        seekBar.addTarget(self, action: #selector(seekChanged), for: [.touchUpInside, .touchUpOutside, .touchCancel])
         controls.addArrangedSubview(row); controls.addArrangedSubview(seekBar); controls.addArrangedSubview(timeLabel)
         controls.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(controls)
@@ -100,10 +101,12 @@ private class MovieViewController: AVPlayerViewController {
         return button
     }
     @objc private func toggleControls(_ gesture: UITapGestureRecognizer) {
+        let point = gesture.location(in: view)
+        guard view.bounds.insetBy(dx: 28, dy: 28).contains(point) else { return }
         if !controls.isHidden && (controls.bounds.contains(gesture.location(in: controls)) || centerControls.bounds.contains(gesture.location(in: centerControls))) { return }
         controls.isHidden.toggle(); hideTimer?.invalidate()
         centerControls.isHidden = controls.isHidden
-        if !controls.isHidden { hideTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in
+        if !controls.isHidden { hideTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in
             self?.controls.isHidden = true; self?.centerControls.isHidden = true
         } }
     }

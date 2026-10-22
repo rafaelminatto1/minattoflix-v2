@@ -269,7 +269,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
   const [muted, setMuted] = useState(() => localStorage.getItem('minattoflix_muted') === 'true');
   const [playbackRate, setPlaybackRate] = useState(() => Number(localStorage.getItem('minattoflix_playbackRate')) || 1);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [expandedPlayer, setExpandedPlayer] = useState(false);
+  const [expandedPlayer, setExpandedPlayer] = useState(nativeIos);
   const [fullscreenError, setFullscreenError] = useState('');
   const [introDismissed, setIntroDismissed] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
@@ -571,6 +571,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
   }, [isMobile, useWebCodecsCanvas, expandedPlayer]);
 
   const toggleFullscreen = useCallback(async () => {
+    if (isMobile || nativeIos) { await enterFullscreen(); return; }
     setFullscreenError('');
     const doc = document as Document & { webkitFullscreenElement?: Element | null };
     const currentIsFs = isPlayerFullscreen(doc, videoRef.current as FullscreenVideo | null) || expandedPlayer;
@@ -589,7 +590,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
     }
 
     await enterFullscreen();
-  }, [enterFullscreen, expandedPlayer]);
+  }, [enterFullscreen, expandedPlayer, isMobile, nativeIos]);
 
   useEffect(() => {
     const syncFullscreenState = () => {
@@ -1223,15 +1224,15 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
         const isPausedNow = useWebCodecsCanvas
           ? canvasPlayerRef.current?.isPaused() ?? !playing
           : videoRef.current?.paused ?? !playing;
-        if (!isPausedNow && (isMobile || !isHoveringControlsRef.current)) {
+        if ((isMobile || nativeIos || !isPausedNow) && (isMobile || nativeIos || !isHoveringControlsRef.current)) {
           setShowControls(false);
           if (containerRef.current) {
             containerRef.current.classList.add('hide-cursor');
           }
         }
-      }, 3200);
+      }, isMobile || nativeIos ? 2000 : 3200);
     }
-  }, [playing, showAudioSubMenu, showWatchParty, showShortcutsHelp, showQualityDashboard, showQualityMenu, useWebCodecsCanvas, isMobile]);
+  }, [playing, showAudioSubMenu, showWatchParty, showShortcutsHelp, showQualityDashboard, showQualityMenu, useWebCodecsCanvas, isMobile, nativeIos]);
 
   useEffect(() => {
     if (!fullscreenError || !expandedPlayer) return;
@@ -1244,7 +1245,9 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
   }, []);
 
   useEffect(() => {
-    if (!playing) {
+    if (!playing && (isMobile || nativeIos)) {
+      resetControlsTimer();
+    } else if (!playing) {
       setShowControls(true);
       if (containerRef.current) {
         containerRef.current.classList.remove('hide-cursor');
@@ -1635,12 +1638,17 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
     }
   };
 
-  const handleVideoClick = () => {
+  const handleVideoClick = (event: React.MouseEvent) => {
+    if (isMobile || nativeIos) {
+      const bounds = containerRef.current?.getBoundingClientRect();
+      if (bounds && (event.clientX < bounds.left + 28 || event.clientX > bounds.right - 28 || event.clientY < bounds.top + 28 || event.clientY > bounds.bottom - 28)) return;
+    }
     if (showAudioSubMenu) { setShowAudioSubMenu(false); return; }
     if (showWatchParty) { setShowWatchParty(false); return; }
     if (isMobile || nativeIos) {
       if (controlsTimerRef.current) window.clearTimeout(controlsTimerRef.current);
-      setShowControls(visible => !visible);
+      if (showControls) setShowControls(false);
+      else resetControlsTimer();
       return;
     }
 
@@ -1661,6 +1669,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
   };
 
   const handleVideoDoubleClick = (e: React.MouseEvent) => {
+    if (isMobile || nativeIos) return;
     e.stopPropagation();
     e.preventDefault();
     if (clickTimeoutRef.current) {
@@ -2343,7 +2352,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
         </div>
 
         {/* Right Top: Quick Player Actions (Fullscreen & Audio/Subtitles) */}
-        <div className="flex items-center gap-1.5 sm:gap-2 text-xs shrink-0">
+        {!isMobile && !nativeIos && <div className="flex items-center gap-1.5 sm:gap-2 text-xs shrink-0">
           {wsConnected && (
             <span className="hidden md:flex bg-[#E50914]/25 border border-[#E50914] text-white px-2.5 py-1 rounded items-center gap-1.5 font-semibold">
               <Users className="w-3.5 h-3.5 text-[#E50914]" />
@@ -2385,7 +2394,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
               </>
             )}
           </button>
-        </div>
+        </div>}
       </div>
 
       {/* Cloudflare Durable Objects Watch Party & Smartphone TV Remote Drawer */}
@@ -2935,7 +2944,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
             </button>
 
             {/* Fullscreen Toggle */}
-            <button
+            {!isMobile && !nativeIos && <button
               type="button"
               onClick={toggleFullscreen}
               className="text-zinc-200 hover:text-white flex items-center justify-center transition cursor-pointer touch-target-sm sm:touch-target tap-highlight p-1.5 rounded"
@@ -2943,7 +2952,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
               aria-label={isFullscreen ? 'Sair da tela cheia' : 'Tela cheia'}
             >
               {isFullscreen ? <Minimize className="w-4 h-4 sm:w-5 sm:h-5" /> : <Maximize className="w-4 h-4 sm:w-5 sm:h-5" />}
-            </button>
+            </button>}
 
             {/* Cast / AirPlay */}
             <button

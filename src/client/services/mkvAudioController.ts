@@ -865,6 +865,7 @@ export class MkvWebCodecsCanvasPlayer {
     this.waitingForFrame = true;
     clearTimeout(this.frameWaitTimer);
     this.callbacks.onWaiting();
+    let lastUiUpdateSec = -Infinity;
     let anchored = false;
     let baseWallMs = performance.now();
     let baseMediaSec = Math.max(0, startTimeSec);
@@ -906,7 +907,11 @@ export class MkvWebCodecsCanvasPlayer {
           this.waitingForFrame = false;
           this.callbacks.onCanPlay();
         }
-        this.callbacks.onTimeUpdate(wrapped.timestamp, wrapped.timestamp + 4);
+        // Keep the audio clock frame-accurate without rerendering React at 24–60 fps.
+        if (wrapped.timestamp - lastUiUpdateSec >= 0.25) {
+          lastUiUpdateSec = wrapped.timestamp;
+          this.callbacks.onTimeUpdate(wrapped.timestamp, wrapped.timestamp + 4);
+        }
         // Silence queued audio while waiting for another decoded frame, not
         // only after that delayed frame finally arrives.
         this.frameWaitTimer = setTimeout(() => {
