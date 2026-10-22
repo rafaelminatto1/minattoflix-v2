@@ -120,3 +120,17 @@ Referências:
 - CI concluiu compilação Swift, assinatura e upload em 3m09s; build 9 recebido pela Apple.
 - Build Apple `c5eb4034-465b-4cf9-a80a-ead14870f865` processado e associado ao grupo interno `MinattoFlix - Teste pessoal` (1 testador). Roteiro específico registrado no App Store Connect.
 - Confirmado **Em testes** no grupo interno; comprovante `docs/testflight-build9-liberado.png`. Atualizar MinattoFlix para 1.0 (9) no TestFlight e executar validação física.
+
+## Carregamento discreto e retomada do áudio — 21/10/2026
+
+- Commit `56b773a18b542aa8b790173cf6e471abeb32fb32`; build 1.0 (10): https://codemagic.io/app/6ad6cdb86a483b360aff08eb/build/6ad968758a524d15d6a5dde3
+- Carregamento normal nativo e alternativo mostra apenas spinner vermelho. Removido o texto “Carregando transmissão em alta definição”; mantido nome acessível para leitor de tela.
+- Play no AVPlayer reconfigura a categoria playback/moviePlayback e reativa AVAudioSession antes de retomar. O plugin também expõe activateAudio ao player alternativo, usado ao iniciar/retomar, sem reiniciar áudio a cada toque na imagem.
+- Web Audio recupera contexto interrompido após lock e realinha o áudio com o relógio atual após resume. Contexto fechado é recriado. Uma recuperação assíncrona não retoma o áudio se o vídeo estiver pausado.
+- Mantida pausa no bloqueio e ausência de retomada automática ao desbloquear. Volume e mute do próprio player continuam respeitados.
+- TypeScript, 78 testes e builds web/nativo passaram localmente. Testes novos cobrem contexto interrompido, respeito à pausa e recriação de contexto fechado. Validar no iPhone com chave silenciosa ativada, bloquear/desbloquear e tocar Play sem mexer na chave.
+- Produção Cloudflare: `b704c938-9062-49f9-84cc-e90044c62a30`. Sessão e catálogo HTTP 200; administração sem sessão HTTP 401. Workers + Neon restrito preservado.
+- Referência AVAudioSession: https://developer.apple.com/documentation/avfaudio/avaudiosession e https://developer.apple.com/documentation/avfaudio/avaudiosession/interruptionnotification
+- Codemagic concluiu compilação Swift, assinatura e upload em 2m47s. Build 10 recebido pela Apple para processamento.
+- Build Apple `bec094e0-8a83-4277-8fc9-f64f10f1febe` processado e associado ao grupo interno `MinattoFlix - Teste pessoal` (1 testador). Roteiro de teste registrado no App Store Connect.
+- Confirmado **Em testes** no grupo interno. Notas salvas; comprovante `docs/testflight-build10-liberado.png`. Atualizar para 1.0 (10) no TestFlight.
