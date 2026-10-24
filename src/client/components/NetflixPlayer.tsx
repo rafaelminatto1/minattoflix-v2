@@ -419,16 +419,25 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
       audioControllerRef.current?.notifyClockPause();
       setPlaying(false);
     };
+    const resume = () => {
+      playbackSuspendedRef.current = false;
+    };
     const unwatch = watchPlaybackVisibility(document, window, pause);
     let disposed = false;
-    let listener: PluginListenerHandle | undefined;
+    let inactiveListener: PluginListenerHandle | undefined;
+    let activeListener: PluginListenerHandle | undefined;
     if (nativeIos) {
-      const shell = registerPlugin<{addListener(event: 'playbackInactive', callback: () => void): Promise<PluginListenerHandle>}>('NativePlayer');
+      const shell = registerPlugin<{
+        addListener(event: 'playbackInactive' | 'playbackActive', callback: () => void): Promise<PluginListenerHandle>
+      }>('NativePlayer');
       void shell.addListener('playbackInactive', pause).then(handle => {
-        if (disposed) void handle.remove(); else listener = handle;
+        if (disposed) void handle.remove(); else inactiveListener = handle;
+      }).catch(() => {});
+      void shell.addListener('playbackActive', resume).then(handle => {
+        if (disposed) void handle.remove(); else activeListener = handle;
       }).catch(() => {});
     }
-    return () => { disposed = true; unwatch(); void listener?.remove(); };
+    return () => { disposed = true; unwatch(); void inactiveListener?.remove(); void activeListener?.remove(); };
   }, [nativeIos]);
 
   // Playback telemetry uses bounded events; there is no periodic metrics upload.
@@ -701,9 +710,10 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
         setBufferedEnd(bufEnd);
       },
       onCanPlay: () => {
-        if (playbackSuspendedRef.current || document.visibilityState !== 'visible') {
+        if (document.visibilityState !== 'visible') {
           player.pause(); audioControllerRef.current?.notifyClockPause(); setPlaying(false); return;
         }
+        playbackSuspendedRef.current = false;
         metricsRef.current?.('start');
         if (!active) return;
         clearLoadTimer();
@@ -1978,8 +1988,11 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
                 v.currentTime = item.progress.position_seconds;
               }
               setIsBuffering(false);
-              if (v.paused && !playbackSuspendedRef.current && document.visibilityState === 'visible' && (nativeIos || !isIosWebKit())) {
-                v.play().catch(() => { setPlaying(false); setShowControls(true); });
+              if (document.visibilityState === 'visible') {
+                playbackSuspendedRef.current = false;
+                if (v.paused && (nativeIos || !isIosWebKit())) {
+                  v.play().catch(() => { setPlaying(false); setShowControls(true); });
+                }
               }
               // Auto-fullscreen em computadores e celulares quando o vídeo inicia
               if (!isFullscreen && !v.paused) {
@@ -1994,6 +2007,10 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
               if (!useWebCodecsCanvas) {
                 setIsBuffering(false);
                 setStreamError(null);
+                if (document.visibilityState === 'visible' && videoRef.current?.paused && (nativeIos || !isIosWebKit())) {
+                  playbackSuspendedRef.current = false;
+                  videoRef.current.play().catch(() => {});
+                }
               }
             }}
             onTimeUpdate={(e) => {

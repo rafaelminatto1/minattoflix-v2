@@ -48,6 +48,7 @@ function getOrCreateHlsHandler(
 interface HeadChunkEntry {
   bytes: Uint8Array;
   totalSize: number;
+  mimeType: string;
   expiresAt: number;
 }
 
@@ -76,7 +77,7 @@ export function getHeadChunkBytes(fileMeta?: Record<string, unknown> | null): nu
 const headChunkMemoryCache = new Map<string, HeadChunkEntry>();
 const headChunkInflight = new Set<string>();
 
-function setMemoryHeadChunk(fileId: string, bytes: Uint8Array, totalSize: number) {
+function setMemoryHeadChunk(fileId: string, bytes: Uint8Array, totalSize: number, mimeType: string = 'video/webm') {
   const maximumBytes = 48 * 1024 * 1024;
   if (bytes.byteLength > maximumBytes) return;
   headChunkMemoryCache.delete(fileId);
@@ -89,6 +90,7 @@ function setMemoryHeadChunk(fileId: string, bytes: Uint8Array, totalSize: number
   headChunkMemoryCache.set(fileId, {
     bytes,
     totalSize,
+    mimeType,
     expiresAt: Date.now() + 30 * 60 * 1000,
   });
 }
@@ -139,8 +141,10 @@ async function populateHeadChunkInBackground(
     const bytes = new Uint8Array(await res.arrayBuffer());
     if (bytes.byteLength < 65536) return;
 
+    const container = String(mediaFile.container || 'mkv').toLowerCase();
+    const mime = container === 'mkv' || container === 'webm' ? 'video/webm' : container === 'mp4' || container === 'm4v' ? 'video/mp4' : 'application/octet-stream';
     mediaFile.size_bytes = totalSize;
-    setMemoryHeadChunk(fileId, bytes, totalSize);
+    setMemoryHeadChunk(fileId, bytes, totalSize, mime);
 
     if (env.MEDIA_BUCKET) {
       await env.MEDIA_BUCKET.put(r2Key, bytes, {
@@ -222,7 +226,7 @@ streamRoutes.on(['GET', 'HEAD'], '/api/stream/:fileId', async (c) => {
           'Accept-Ranges': 'bytes',
           'Content-Range': `bytes ${qStart}-${sliceEnd}/${memHead.totalSize}`,
           'Content-Length': String(chunkSlice.byteLength),
-          'Content-Type': 'video/webm',
+          'Content-Type': memHead.mimeType || 'video/webm',
           'X-Cloud-Provider': 'cloudflare-r2-head',
           'X-Minatto-FastStart': 'HIT-MEMORY',
         },
@@ -307,7 +311,7 @@ streamRoutes.on(['GET', 'HEAD'], '/api/stream/:fileId', async (c) => {
           if (r2Obj) {
             const bytes = new Uint8Array(await r2Obj.arrayBuffer());
             if (bytes.byteLength > reqStart && (reqEnd === undefined || reqEnd < bytes.byteLength)) {
-              setMemoryHeadChunk(fileId, bytes, knownTotal);
+              setMemoryHeadChunk(fileId, bytes, knownTotal, mimeType);
               headEntry = headChunkMemoryCache.get(fileId);
             }
           }

@@ -33,6 +33,7 @@ private class MovieViewController: AVPlayerViewController {
     private let timeLabel = UILabel()
     private let seekBar = UISlider()
     private let playButton = UIButton(type: .system)
+    private let spinner = UIActivityIndicatorView(style: .large)
     private var hideTimer: Timer?
     private var progressTimer: Timer?
     override func viewDidLoad() {
@@ -66,6 +67,17 @@ private class MovieViewController: AVPlayerViewController {
         centerControls.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(centerControls)
         NSLayoutConstraint.activate([centerControls.centerXAnchor.constraint(equalTo: view.centerXAnchor), centerControls.centerYAnchor.constraint(equalTo: view.centerYAnchor)])
+        
+        spinner.color = UIColor(red: 0.9, green: 0.05, blue: 0.08, alpha: 1.0)
+        spinner.hidesWhenStopped = true
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(spinner)
+        NSLayoutConstraint.activate([
+            spinner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            spinner.centerYAnchor.constraint(equalTo: view.centerYAnchor)
+        ])
+        spinner.startAnimating()
+
         seekBar.accessibilityLabel = "Posição do filme"
         timeLabel.textColor = .white; timeLabel.font = .preferredFont(forTextStyle: .caption1)
         seekBar.addTarget(self, action: #selector(seekChanged), for: [.touchUpInside, .touchUpOutside, .touchCancel])
@@ -86,6 +98,11 @@ private class MovieViewController: AVPlayerViewController {
                 self.seekBar.value = Float(player.currentTime().seconds / duration)
                 let remaining = max(0, Int((duration - player.currentTime().seconds) / 60))
                 self.timeLabel.text = "\(remaining) min restantes"
+            }
+            if player.timeControlStatus == .playing || player.currentTime().seconds > 0.5 {
+                self.spinner.stopAnimating()
+            } else if player.timeControlStatus == .waitingToPlayAtSpecifiedRate {
+                self.spinner.startAnimating()
             }
             self.playButton.setImage(UIImage(systemName: player.rate == 0 ? "play.fill" : "pause.fill"), for: .normal)
             self.playButton.accessibilityLabel = player.rate == 0 ? "Reproduzir" : "Pausar"
@@ -156,12 +173,18 @@ private class MovieViewController: AVPlayerViewController {
 public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin {
     private var lifecycleObservers: [NSObjectProtocol] = []
     public override func load() {
-        for name in [UIApplication.willResignActiveNotification, UIApplication.didEnterBackgroundNotification, Notification.Name("MinattoPlaybackInactive")] {
+        for name in [UIApplication.didEnterBackgroundNotification, Notification.Name("MinattoPlaybackInactive")] {
             lifecycleObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 self?.playbackInterrupted = true
                 self?.player?.pause()
                 self?.emitProgress()
                 self?.notifyListeners("playbackInactive", data: [:])
+            })
+        }
+        for name in [UIApplication.didBecomeActiveNotification, Notification.Name("MinattoPlaybackActive")] {
+            lifecycleObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                self?.playbackInterrupted = false
+                self?.notifyListeners("playbackActive", data: [:])
             })
         }
     }
@@ -257,17 +280,22 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin {
                     }
                     let duration = item.duration.seconds
                     let position = duration.isFinite ? min(start, max(0, duration - 1)) : start
-                    player.seek(to: CMTime(seconds: position, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] completed in
-                        guard completed, let self = self, self.activeCall != nil else { return }
-                        player.preroll(atRate: 1) { [weak self] ready in
-                            DispatchQueue.main.async {
-                                guard let self = self, self.activeCall != nil else { return }
-                                guard ready else { self.fail("Não foi possível preparar áudio e vídeo."); return }
-                                self.startupTimer?.invalidate()
-                                // Preparing can finish after the user locks the phone.
-                                if !self.playbackInterrupted && self.controller?.view.window?.windowScene?.activationState == .foregroundActive { player.play() }
-                            }
+                    let targetTime = CMTime(seconds: position, preferredTimescale: 600)
+                    
+                    let startPlayback = { [weak self] in
+                        guard let self = self, self.activeCall != nil else { return }
+                        self.startupTimer?.invalidate()
+                        if !self.playbackInterrupted && UIApplication.shared.applicationState == .active {
+                            player.play()
                         }
+                    }
+                    
+                    if position > 0 {
+                        player.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero) { _ in
+                            DispatchQueue.main.async { startPlayback() }
+                        }
+                    } else {
+                        startPlayback()
                     }
                 }
             }
