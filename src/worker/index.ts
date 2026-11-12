@@ -71,6 +71,10 @@ const app = new Hono<{ Bindings: Env }>();
 
 app.use('/api/*', async (c, next) => {
   await next();
+  if (c.req.path.startsWith('/api/stream/') || c.req.path.startsWith('/api/subtitles/')) {
+    // Media stream and subtitle responses maintain their own CORS and Cache-Control headers
+    return;
+  }
   // Route-specific streaming responses must not override the authentication/cache policy.
   c.header('Cache-Control', 'private, no-store');
   c.header('Referrer-Policy', 'no-referrer');
@@ -83,13 +87,16 @@ app.use('/api/*', async (c, next) => {
 
 app.use('/api/*', cors({
   origin: (origin, c: Context<{ Bindings: Env }>) => {
+    if (c.req.path.startsWith('/api/stream/') || c.req.path.startsWith('/api/subtitles/')) {
+      return origin || '*';
+    }
     const allowed = [new URL(c.req.url).origin, 'capacitor://localhost', 'http://localhost',
       ...(c.env.ALLOWED_ORIGINS || '').split(',').map((value: string) => value.trim()).filter(Boolean)];
     return allowed.includes(origin) ? origin : '';
   },
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD'],
   allowHeaders: ['Content-Type', 'Range', 'Authorization'],
-  exposeHeaders: ['Content-Length', 'Content-Range', 'Accept-Ranges', 'Content-Type', 'Retry-After'],
+  exposeHeaders: ['Content-Length', 'Content-Range', 'Accept-Ranges', 'Content-Type', 'Retry-After', 'X-Cloud-Provider', 'X-Minatto-FastStart'],
 }));
 app.use('/api/*', async (c, next) => {
   const runner=c.req.path.startsWith('/api/preparation/jobs/');

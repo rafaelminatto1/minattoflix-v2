@@ -48,7 +48,16 @@ function getOrCreateHlsHandler(
 interface HeadChunkEntry {
   bytes: Uint8Array;
   totalSize: number;
+  mimeType: string;
   expiresAt: number;
+}
+
+export function getStreamMimeType(container?: string | null): string {
+  const c = String(container || '').toLowerCase();
+  if (c === 'mp4' || c === 'm4v') return 'video/mp4';
+  if (c === 'webm') return 'video/webm';
+  if (c === 'mkv') return 'video/x-matroska';
+  return 'application/octet-stream';
 }
 
 // Pre-aquecimento: 8 MB para catálogo geral (4x maior que os 2 MB originais)
@@ -76,7 +85,7 @@ export function getHeadChunkBytes(fileMeta?: Record<string, unknown> | null): nu
 const headChunkMemoryCache = new Map<string, HeadChunkEntry>();
 const headChunkInflight = new Set<string>();
 
-function setMemoryHeadChunk(fileId: string, bytes: Uint8Array, totalSize: number) {
+function setMemoryHeadChunk(fileId: string, bytes: Uint8Array, totalSize: number, mimeType?: string) {
   const maximumBytes = 48 * 1024 * 1024;
   if (bytes.byteLength > maximumBytes) return;
   headChunkMemoryCache.delete(fileId);
@@ -86,9 +95,11 @@ function setMemoryHeadChunk(fileId: string, bytes: Uint8Array, totalSize: number
     used -= entry.bytes.byteLength;
     headChunkMemoryCache.delete(key);
   }
+  const fallbackMime = getStreamMimeType(mediaFileMetaCache.get(fileId)?.row?.container as string | undefined);
   headChunkMemoryCache.set(fileId, {
     bytes,
     totalSize,
+    mimeType: mimeType || fallbackMime,
     expiresAt: Date.now() + 30 * 60 * 1000,
   });
 }
@@ -113,7 +124,8 @@ async function populateHeadChunkInBackground(
       if (existingR2) {
         const buf = new Uint8Array(await existingR2.arrayBuffer());
         if (buf.byteLength >= targetHeadBytes || buf.byteLength >= knownTotalSize) {
-          setMemoryHeadChunk(fileId, buf, knownTotalSize);
+          const mime = getStreamMimeType(mediaFile.container as string);
+          setMemoryHeadChunk(fileId, buf, knownTotalSize, mime);
           return;
         }
       }
@@ -139,8 +151,9 @@ async function populateHeadChunkInBackground(
     const bytes = new Uint8Array(await res.arrayBuffer());
     if (bytes.byteLength < 65536) return;
 
+    const mime = getStreamMimeType(mediaFile.container as string);
     mediaFile.size_bytes = totalSize;
-    setMemoryHeadChunk(fileId, bytes, totalSize);
+    setMemoryHeadChunk(fileId, bytes, totalSize, mime);
 
     if (env.MEDIA_BUCKET) {
       await env.MEDIA_BUCKET.put(r2Key, bytes, {
@@ -222,7 +235,7 @@ streamRoutes.on(['GET', 'HEAD'], '/api/stream/:fileId', async (c) => {
           'Accept-Ranges': 'bytes',
           'Content-Range': `bytes ${qStart}-${sliceEnd}/${memHead.totalSize}`,
           'Content-Length': String(chunkSlice.byteLength),
-          'Content-Type': 'video/webm',
+          'Content-Type': memHead.mimeType || getStreamMimeType(cachedMeta?.container as string),
           'X-Cloud-Provider': 'cloudflare-r2-head',
           'X-Minatto-FastStart': 'HIT-MEMORY',
         },
@@ -258,12 +271,7 @@ streamRoutes.on(['GET', 'HEAD'], '/api/stream/:fileId', async (c) => {
   const externalFileId = String(mediaFile.external_file_id);
   const shareUrl = String(mediaFile.share_url || '');
   const container = String(mediaFile.container || 'mkv').toLowerCase();
-  const mimeType =
-    container === 'mkv' || container === 'webm'
-      ? 'video/webm'
-      : container === 'mp4' || container === 'm4v'
-        ? 'video/mp4'
-        : 'application/octet-stream';
+  const mimeType = getStreamMimeType(container);
 
   // Prewarm mode
   if (isPrewarm) {
@@ -307,7 +315,7 @@ streamRoutes.on(['GET', 'HEAD'], '/api/stream/:fileId', async (c) => {
           if (r2Obj) {
             const bytes = new Uint8Array(await r2Obj.arrayBuffer());
             if (bytes.byteLength > reqStart && (reqEnd === undefined || reqEnd < bytes.byteLength)) {
-              setMemoryHeadChunk(fileId, bytes, knownTotal);
+              setMemoryHeadChunk(fileId, bytes, knownTotal, mimeType);
               headEntry = headChunkMemoryCache.get(fileId);
             }
           }

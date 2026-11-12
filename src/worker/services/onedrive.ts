@@ -20,20 +20,53 @@ let memoryBadgerExpiresAt = 0;
 const memoryRedeemedShares = new Set<string>();
 const memoryDownloadUrls = new Map<string, { url: string; expiresAt: number }>();
 
+async function getEdgeCachedString(key: string): Promise<string | null> {
+  try {
+    if (typeof caches !== 'undefined' && caches.default) {
+      const match = await caches.default.match(new Request(`https://cache.local/${encodeURIComponent(key)}`));
+      if (match) return await match.text();
+    }
+  } catch {}
+  return null;
+}
+
+async function putEdgeCachedString(key: string, value: string, ttlSeconds: number): Promise<void> {
+  try {
+    if (typeof caches !== 'undefined' && caches.default) {
+      await caches.default.put(
+        new Request(`https://cache.local/${encodeURIComponent(key)}`),
+        new Response(value, {
+          headers: {
+            'Cache-Control': `public, max-age=${ttlSeconds}`,
+          },
+        })
+      );
+    }
+  } catch {}
+}
+
 function cacheDownloadUrl(itemId: string, url: string, kv?: KVNamespaceBinding) {
   memoryDownloadUrls.set(itemId, { url, expiresAt: Date.now() + 25 * 60 * 1000 });
+  putEdgeCachedString(`onedrive:dl:${itemId}`, url, 1500).catch(() => {});
   if (kv) {
     kv.put(`onedrive:dl:${itemId}`, url, { expirationTtl: 1500 }).catch(() => {});
   }
 }
 
 /**
- * Acquires a Microsoft OneDrive Personal "Badger" token (cached in memory + Cloudflare KV for 50 minutes)
+ * Acquires a Microsoft OneDrive Personal "Badger" token (cached in memory + Edge Cache + Cloudflare KV for 50 minutes)
  * which allows anonymous read/stream access to any public 1drv.ms shared folder.
  */
 async function getOneDriveBadgerToken(kv?: KVNamespaceBinding): Promise<string> {
   if (memoryBadgerToken && Date.now() < memoryBadgerExpiresAt) {
     return memoryBadgerToken;
+  }
+
+  const edgeCached = await getEdgeCachedString('onedrive:badger:token');
+  if (edgeCached) {
+    memoryBadgerToken = edgeCached;
+    memoryBadgerExpiresAt = Date.now() + 45 * 60 * 1000;
+    return edgeCached;
   }
 
   const kvKey = 'onedrive:badger:token';
@@ -73,6 +106,8 @@ async function getOneDriveBadgerToken(kv?: KVNamespaceBinding): Promise<string> 
   memoryBadgerToken = data.token;
   memoryBadgerExpiresAt = Date.now() + 45 * 60 * 1000;
   memoryRedeemedShares.clear();
+
+  putEdgeCachedString('onedrive:badger:token', data.token, 2700).catch(() => {});
 
   if (kv) {
     kv.put(kvKey, data.token, { expirationTtl: 3000 }).catch(() => {});
@@ -238,6 +273,12 @@ export async function resolveOneDriveDownloadUrl(
     const memCached = memoryDownloadUrls.get(cleanItemId);
     if (memCached && Date.now() < memCached.expiresAt) {
       return memCached.url;
+    }
+
+    const edgeCached = await getEdgeCachedString(kvDlKey);
+    if (edgeCached) {
+      memoryDownloadUrls.set(cleanItemId, { url: edgeCached, expiresAt: Date.now() + 25 * 60 * 1000 });
+      return edgeCached;
     }
 
     if (kv) {

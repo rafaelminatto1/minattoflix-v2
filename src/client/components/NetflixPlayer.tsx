@@ -253,8 +253,8 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
     (selectedFile?.filename || '').toLowerCase().includes('2160p') ||
     (selectedFile?.size_bytes ? Number(selectedFile.size_bytes) > 8 * 1024 * 1024 * 1024 : false)
   );
-  // On iOS WebKit, native <video> cannot play MKV containers and worker cannot transmux MKV to HLS.
-  // Directly initialize WebCodecs canvas player for MKV files on iOS to ensure immediate playback.
+  // On iOS WebKit, native <video> in Mobile Safari cannot play MKV containers directly.
+  // Use WebCodecs canvas player for MKV files on iOS WebKit. On other browsers, HTML5 video plays directly.
   const [useWebCodecsCanvas, setUseWebCodecsCanvas] = useState<boolean>(() => {
     return isIosWebKit() && Boolean(
       (initialSelectedFile?.container || '').toLowerCase() === 'mkv' ||
@@ -808,6 +808,18 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
       if (frameId) video.cancelVideoFrameCallback(frameId);
     };
   }, [effectiveStreamUrl, useWebCodecsCanvas, isMkvFile]);
+
+  // Buffering watchdog: if player remains stuck buffering for > 8s, reveal controls to allow user gesture / action
+  useEffect(() => {
+    if (!isBuffering || !effectiveStreamUrl) return;
+    const watchdog = window.setTimeout(() => {
+      setShowControls(true);
+      if (!useWebCodecsCanvas && typeof window !== 'undefined' && 'VideoDecoder' in window && isMkvFile) {
+        setUseWebCodecsCanvas(true);
+      }
+    }, 8000);
+    return () => window.clearTimeout(watchdog);
+  }, [isBuffering, effectiveStreamUrl, useWebCodecsCanvas, isMkvFile]);
 
   useEffect(() => {
     if (!effectiveStreamUrl || !audioControllerRef.current) return;
@@ -2048,25 +2060,25 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
                 setAudioStatusNote('HLS falhou, tentando stream direto...');
                 return;
               }
+              // If native HTML5 video failed, fallback immediately to WebCodecs if supported
+              if (typeof window !== 'undefined' && 'VideoDecoder' in window && !isTvOrAndroidNative()) {
+                setUseWebCodecsCanvas(true);
+                setAudioStatusNote('Motor WebCodecs + WASM ativado');
+                return;
+              }
               // Automatic Failover: switch to alternate mirror automatically in the background
               if (selectedFile) failedFilesRef.current.add(selectedFile.id);
               const alternateMirror = item.files.find((f) => !failedFilesRef.current.has(f.id));
               if (alternateMirror && !customStreamUrl) {
                 setSelectedFile(alternateMirror);
-                setUseWebCodecsCanvas(isIosWebKit() &&
-                  (/^mkv$/i.test(alternateMirror.container || '') || /\.mkv$/i.test(alternateMirror.filename || '')));
+                const isAltMkv = /^mkv$/i.test(alternateMirror.container || '') || /\.mkv$/i.test(alternateMirror.filename || '');
+                setUseWebCodecsCanvas(isAltMkv && typeof window !== 'undefined' && 'VideoDecoder' in window);
                 setAudioStatusNote('Reconectando stream automaticamente...');
-                return;
-              }
-              // Fallback to WebCodecs + WASM MKV Canvas Engine (for iOS Chrome/Safari & macOS Safari, NOT Smart TV)
-              if (!isTvOrAndroidNative() && typeof window !== 'undefined' && 'VideoDecoder' in window) {
-                setUseWebCodecsCanvas(true);
-                setAudioStatusNote('Motor WebCodecs + WASM MKV ativado (Compatibilidade iOS / Safari)');
                 return;
               }
               setIsBuffering(false);
               setStreamError(
-                'O arquivo .MKV usa codec HEVC/Dolby exclusivo ou está concluindo sincronização.'
+                'O arquivo de vídeo não pôde ser reproduzido diretamente. Tente outra fonte ou abra no VLC.'
               );
             }}
             className={`absolute inset-0 w-full h-full ${videoFitClass} bg-black ${hideCursor ? 'cursor-none' : 'cursor-pointer'} ${
@@ -2263,7 +2275,7 @@ export const NetflixPlayer: React.FC<NetflixPlayerProps> = ({
         </div>
       )}
 
-      {controlsVisible && !isBuffering && !streamError && <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center gap-8">
+      {controlsVisible && (!isBuffering || !playing) && !streamError && <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center gap-8">
         <button aria-label="Voltar dez segundos" onClick={()=>skipSeconds(-10)} className="pointer-events-auto rounded-full bg-black/50 w-14 h-14 flex items-center justify-center"><RotateCcw size={28}/><span className="sr-only">Voltar 10 segundos</span></button>
         <button aria-label={playing?'Pausar':'Reproduzir'} onClick={togglePlay} className="pointer-events-auto rounded-full bg-black/50 w-20 h-20 flex items-center justify-center">{playing?<Pause size={40}/>:<Play size={40}/>}</button>
         <button aria-label="Avançar dez segundos" onClick={()=>skipSeconds(10)} className="pointer-events-auto rounded-full bg-black/50 w-14 h-14 flex items-center justify-center"><RotateCw size={28}/></button>
