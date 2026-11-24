@@ -22,8 +22,9 @@ const memoryDownloadUrls = new Map<string, { url: string; expiresAt: number }>()
 
 async function getEdgeCachedString(key: string): Promise<string | null> {
   try {
-    if (typeof caches !== 'undefined' && caches.default) {
-      const match = await caches.default.match(new Request(`https://cache.local/${encodeURIComponent(key)}`));
+    const edgeCache = typeof caches === 'undefined' ? undefined : (caches as CacheStorage & { default?: Cache }).default;
+    if (edgeCache) {
+      const match = await edgeCache.match(new Request(`https://cache.local/${encodeURIComponent(key)}`));
       if (match) return await match.text();
     }
   } catch {}
@@ -32,8 +33,9 @@ async function getEdgeCachedString(key: string): Promise<string | null> {
 
 async function putEdgeCachedString(key: string, value: string, ttlSeconds: number): Promise<void> {
   try {
-    if (typeof caches !== 'undefined' && caches.default) {
-      await caches.default.put(
+    const edgeCache = typeof caches === 'undefined' ? undefined : (caches as CacheStorage & { default?: Cache }).default;
+    if (edgeCache) {
+      await edgeCache.put(
         new Request(`https://cache.local/${encodeURIComponent(key)}`),
         new Response(value, {
           headers: {

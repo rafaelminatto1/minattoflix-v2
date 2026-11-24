@@ -398,10 +398,7 @@ export class HybridAudioSyncController {
    * Pumps decoded AudioBuffers from Mediabunny + @mediabunny/ac3 (WASM libavcodec)
    * synchronized with the HTML5 <video> or WebCodecs Canvas clock.
    */
-  private async startWasmPumpFrom(
-    startTimeSec: number,
-    initialPacket?: { buffer: AudioBuffer; timestamp: number; duration: number }
-  ) {
+  private async startWasmPumpFrom(startTimeSec: number) {
     if (!this.wasmSink) return;
     this.stopActiveBufferNodes();
     const currentRunId = this.wasmAbortId;
@@ -458,13 +455,7 @@ export class HybridAudioSyncController {
       if (currentRunId !== this.wasmAbortId || !this.wasmActive || this.isMediaPaused()) return;
       baseWallClock = ctx.currentTime;
       baseMediaTime = this.getMediaTime();
-      let pumpStartTime = baseMediaTime;
-      if (initialPacket && !this.isMediaPaused()) {
-        schedulePacket(initialPacket);
-        pumpStartTime = Math.max(baseMediaTime, initialPacket.timestamp + initialPacket.duration);
-      }
-
-      for await (const item of this.wasmSink.buffers(pumpStartTime)) {
+      for await (const item of this.wasmSink.buffers(Math.max(0, baseMediaTime))) {
         if (currentRunId !== this.wasmAbortId || !this.wasmActive || this.isMediaPaused()) {
           break;
         }
@@ -547,53 +538,22 @@ export class HybridAudioSyncController {
       };
     }
 
-    // Check if the current environment has hardware/native support for Dolby (EAC3 / AC3)
-    const isApplePlatform = typeof navigator !== 'undefined' && (/iPad|iPhone|iPod|Macintosh/i.test(navigator.userAgent));
-    const hasNativeDolby = isApplePlatform || (typeof document !== 'undefined' && Boolean(
-      document.createElement('video').canPlayType('audio/mp4; codecs="ec-3"') ||
-      document.createElement('video').canPlayType('audio/mp4; codecs="ac-3"')
-    ));
-    const isAacOrMp3 = !track.codec || /aac|mp3|mp4a|opus|vorbis/i.test(track.codec);
-    const nativeCanPlayTrack = isAacOrMp3 || (isDolbyAc3 && hasNativeDolby);
-
-    // MODE 3A: Native Track 0 / Primary Audio in HTML5 <video>
-    // When playing native video (not WebCodecs Canvas) and the platform supports the codec natively,
-    // let the browser decode track 0 in hardware! Zero latency, zero extra network range requests!
-    if (!this.clockOverride && !this.forceWasmMode && track.track_index === 0 && nativeCanPlayTrack) {
-      this.nativeTrackIndex = 0;
+    const isDolbyAc3 = /ac3|ec3/.test((track.codec || '').toLowerCase().replace(/[^a-z0-9]/g, ''));
+    const requiresDecodedAudio = this.forceWasmMode || Boolean(this.clockOverride) || isDolbyAc3;
+    const nativeTracks = (this.videoEl as HTMLVideoElement & { audioTracks?: { length: number } }).audioTracks;
+    if (!requiresDecodedAudio && (track.track_index === 0 || (nativeTracks && track.track_index < nativeTracks.length))) {
+      this.nativeTrackIndex = track.track_index;
       this.suppressNativeAudio = false;
       this.applyNativeAudioPolicy();
       return {
-        mode: 'embedded_native',
-        statusText: `Áudio nativo ativo (${track.label || 'Principal'})`,
+        mode: track.track_index === 0 ? 'embedded_container' : 'embedded_native',
+        statusText: `Faixa nativa selecionada: ${track.label || 'Principal'}`,
       };
     }
 
-    // MODE 3B: Native HTMLMediaElement.audioTracks if supported by browser (Safari / Edge)
-    const anyVideo = this.videoEl as HTMLVideoElement & {
-      audioTracks?: {
-        length: number;
-        [index: number]: { enabled: boolean; language?: string; label?: string };
-      };
-    };
-
-    if (!this.clockOverride && !this.forceWasmMode && anyVideo.audioTracks && anyVideo.audioTracks.length > 1 && nativeCanPlayTrack) {
-      const targetIdx = Math.min(track.track_index, anyVideo.audioTracks.length - 1);
-      for (let i = 0; i < anyVideo.audioTracks.length; i++) {
-        anyVideo.audioTracks[i].enabled = (i === targetIdx);
-      }
-      this.nativeTrackIndex = targetIdx;
-      this.suppressNativeAudio = false;
-      this.applyNativeAudioPolicy();
-      return {
-        mode: 'embedded_native',
-        statusText: `Faixa nativa #${targetIdx + 1} ativada (${track.label})`,
-      };
-    }
-
-    // MODE 4: WebAssembly Demuxer + @mediabunny/ac3 (libavcodec WASM) for Multi-Track MKV & Dolby EAC3/AC3!
+    // MODE 4: WebAssembly Demuxer + @mediabunny/ac3 (libavcodec WASM)
     const streamToOpen = currentStreamUrl || this.videoEl.currentSrc || this.videoEl.src;
-    if (streamToOpen && (this.forceWasmMode || this.clockOverride || track.track_index > 0 || isDolbyAc3)) {
+    if (streamToOpen) {
       let input: Input | null = null;
       try {
         this.ensureAudioGraph();
@@ -636,72 +596,47 @@ export class HybridAudioSyncController {
 
           if (canDec) {
             const sink = new AudioBufferSink(chosenTrack);
-            const curT = this.getMediaTime() || 0;
-            let firstBuffer: { buffer: AudioBuffer; timestamp: number; duration: number } | null = null;
-            try {
-              firstBuffer = await Promise.race([
-                sink.getBuffer(curT),
-                new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Audio probe timeout')), 2500))
-              ]);
-            } catch {
-              if (curT > 0.5) {
-                try {
-                  firstBuffer = await Promise.race([
-                    sink.getBuffer(0),
-                    new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Audio probe timeout')), 1500))
-                  ]);
-                } catch {}
-              }
-            }
-
+            const position = Math.max(0, this.getMediaTime());
+            const firstBuffer = await sink.getBuffer(position);
             if (selectionId !== this.selectionId) return { mode: 'cancelled', statusText: '' };
+            if (!firstBuffer) {
+              // The first audio packet can start after the current video position.
+              let hasAudio = false;
+              for await (const packet of sink.buffers(position)) {
+                hasAudio = Boolean(packet.buffer);
+                break;
+              }
+              if (selectionId !== this.selectionId) return { mode: 'cancelled', statusText: '' };
+              if (!hasAudio) throw new Error('No decoded audio packet');
+            }
+            this.wasmSink = sink;
             this.wasmInput = input;
             input = null;
-            this.wasmSink = sink;
             this.wasmActive = true;
-            this.videoEl.muted = true; // Mute native element while WASM decodes chosen MKV track!
 
             if (!this.isMediaPaused()) {
-              this.startWasmPumpFrom(this.getMediaTime(), firstBuffer || undefined);
+              void this.startWasmPumpFrom(this.getMediaTime());
             }
 
             const fallbackNote = activeIdx !== targetIdx ? ' (Alternativa compatível)' : '';
             return {
               mode: 'wasm_ac3_mediabunny',
-              statusText: `WASM Dolby/MKV Decoder Ativo: Faixa #${activeIdx + 1} (${track.label})${fallbackNote}`,
+              statusText: `Faixa selecionada para decodificação: #${activeIdx + 1} (${track.label})${fallbackNote}`,
             };
           }
         }
         throw new Error('Selected audio track cannot be decoded');
       } catch (error) {
         if (selectionId !== this.selectionId) return { mode: 'cancelled', statusText: '' };
-        console.warn('Audio track selection fallback to native:', error);
-        // CRITICAL FIX: NEVER leave native audio suppressed or muted!
-        this.suppressNativeAudio = false;
-        this.applyNativeAudioPolicy();
-        return {
-          mode: 'native_fallback',
-          statusText: `Áudio nativo ativo (${track.label})`,
-        };
+        console.error('Audio track selection failed', error);
       } finally {
         input?.dispose();
       }
     }
 
-    // Default safe fallback: enable native audio
-    this.suppressNativeAudio = false;
-    this.applyNativeAudioPolicy();
     return {
-      mode: 'native_fallback',
-      statusText: `Áudio nativo ativo (${track.label || 'Principal'})`,
-    };
-
-    this.nativeTrackIndex = track.track_index;
-    this.suppressNativeAudio = false;
-    this.applyNativeAudioPolicy();
-    return {
-      mode: 'embedded_container',
-      statusText: `Faixa do container ativa: ${track.label}`,
+      mode: 'audio_error',
+      statusText: 'Áudio indisponível: não foi possível decodificar esta faixa. Tente outra faixa ou abra no VLC.',
     };
   }
 
