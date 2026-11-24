@@ -71,8 +71,8 @@ const app = new Hono<{ Bindings: Env }>();
 
 app.use('/api/*', async (c, next) => {
   await next();
-  if (c.req.path.startsWith('/api/stream/') || c.req.path.startsWith('/api/subtitles/')) {
-    // Media stream and subtitle responses maintain their own CORS and Cache-Control headers
+  if (c.req.path.startsWith('/api/stream/')) {
+    // Media stream responses maintain their own CORS and Cache-Control headers.
     return;
   }
   // Route-specific streaming responses must not override the authentication/cache policy.
@@ -87,7 +87,7 @@ app.use('/api/*', async (c, next) => {
 
 app.use('/api/*', cors({
   origin: (origin, c: Context<{ Bindings: Env }>) => {
-    if (c.req.path.startsWith('/api/stream/') || c.req.path.startsWith('/api/subtitles/')) {
+    if (c.req.path.startsWith('/api/stream/')) {
       return origin || '*';
     }
     const allowed = [new URL(c.req.url).origin, 'capacitor://localhost', 'http://localhost',

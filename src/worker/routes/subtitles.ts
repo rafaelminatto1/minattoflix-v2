@@ -39,7 +39,6 @@ subtitlesRoutes.get('/api/subtitles/:subIdFile', async (c) => {
           return new Response(text, {
             headers: {
               'Content-Type': 'text/vtt; charset=utf-8',
-              'Access-Control-Allow-Origin': '*',
               'X-Storage-Source': 'Cloudflare-R2',
             },
           });
@@ -63,7 +62,7 @@ subtitlesRoutes.get('/api/subtitles/:subIdFile', async (c) => {
 
   if (rows.length === 0) {
     return new Response('WEBVTT\n\n', {
-      headers: { 'Content-Type': 'text/vtt; charset=utf-8', 'Access-Control-Allow-Origin': '*' },
+      headers: { 'Content-Type': 'text/vtt; charset=utf-8' },
     });
   }
 
@@ -78,7 +77,7 @@ subtitlesRoutes.get('/api/subtitles/:subIdFile', async (c) => {
       }).catch(() => {});
     }
     return new Response(vtt, {
-      headers: { 'Content-Type': 'text/vtt; charset=utf-8', 'Access-Control-Allow-Origin': '*' },
+      headers: { 'Content-Type': 'text/vtt; charset=utf-8' },
     });
   }
 
@@ -100,7 +99,7 @@ subtitlesRoutes.get('/api/subtitles/:subIdFile', async (c) => {
           });
         }
         return new Response(convertedVtt, {
-          headers: { 'Content-Type': 'text/vtt; charset=utf-8', 'Access-Control-Allow-Origin': '*' },
+          headers: { 'Content-Type': 'text/vtt; charset=utf-8' },
         });
       }
     } catch {
@@ -141,7 +140,7 @@ subtitlesRoutes.get('/api/subtitles/:subIdFile', async (c) => {
           });
         }
         return new Response(vtt, {
-          headers: { 'Content-Type': 'text/vtt; charset=utf-8', 'Access-Control-Allow-Origin': '*' },
+          headers: { 'Content-Type': 'text/vtt; charset=utf-8' },
         });
       }
     } catch {
@@ -171,7 +170,7 @@ subtitlesRoutes.get('/api/subtitles/:subIdFile', async (c) => {
           });
         }
         return new Response(matchedTrack.vttContent, {
-          headers: { 'Content-Type': 'text/vtt; charset=utf-8', 'Access-Control-Allow-Origin': '*' },
+          headers: { 'Content-Type': 'text/vtt; charset=utf-8' },
         });
       }
     } catch {

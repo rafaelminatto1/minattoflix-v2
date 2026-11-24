@@ -94,7 +94,18 @@ test('CORS allows the Capacitor origin and does not allow arbitrary websites', a
   assert.equal((await request('/api/session', { headers: { Origin: 'capacitor://localhost' } })).headers.get('Access-Control-Allow-Origin'), 'capacitor://localhost');
   assert.equal((await request('/api/session', { headers: { Origin: 'https://evil.test' } })).headers.get('Access-Control-Allow-Origin'), null);
   const token = await issueSession(env, 'viewer');
-  const subtitle = await request(`/api/subtitles/file.vtt?session=${token}`, { headers: { Origin: 'https://evil.test' } });
+  const subtitlePath = `/api/subtitles/file.vtt?session=${token}`;
+  const subtitle = await request(subtitlePath, { headers: { Origin: 'https://evil.test' } });
   assert.equal(subtitle.headers.get('Access-Control-Allow-Origin'), null);
   assert.equal(subtitle.headers.get('Cache-Control'), 'private, no-store');
+  for (const [origin, expected] of [['capacitor://localhost', 'capacitor://localhost'], ['https://evil.test', null]]) {
+    const response = await request(subtitlePath, { headers: { Origin: origin } });
+    assert.equal(response.headers.get('Access-Control-Allow-Origin'), expected);
+    const preflight = await request('/api/subtitles/file.vtt', {
+      method: 'OPTIONS',
+      headers: { Origin: origin, 'Access-Control-Request-Method': 'GET' },
+    });
+    assert.equal(preflight.status, 204);
+    assert.equal(preflight.headers.get('Access-Control-Allow-Origin'), expected);
+  }
 });
